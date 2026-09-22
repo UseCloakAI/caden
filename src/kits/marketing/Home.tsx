@@ -12,8 +12,8 @@ export function Home() {
         active="Product"
         trailing={
           <>
-            <Button variant="text">Log in</Button>
-            <Button variant="primary" arrow>Get started</Button>
+            <Button variant="text" href="#/signin">Log in</Button>
+            <Button variant="primary" arrow href="#/signup">Get started</Button>
           </>
         }
       />

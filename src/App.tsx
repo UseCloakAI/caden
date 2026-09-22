@@ -1,25 +1,42 @@
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
+import { useRoute, navigate } from './lib/router';
+import { AuthProvider, useAuth } from './lib/auth';
 import { Home } from './kits/marketing/Home';
-import { AppShell } from './kits/app/AppShell';
 import { CadenIOS } from './kits/ios/IOSScreens';
 import { Thumbnail } from './kits/Thumbnail';
+import { AuthScreen } from './product/auth/AuthScreen';
+import { VerifyScreen } from './product/auth/VerifyScreen';
+import { ProductApp, Loading } from './product/ProductApp';
 
-const ROUTES = {
-  '': Home,
-  app: AppShell,
-  ios: CadenIOS,
-  thumbnail: Thumbnail,
-};
+function Routes() {
+  const [head, ...rest] = useRoute();
+  const { session, loading } = useAuth();
+  const authPage = head === 'signin' || head === 'signup';
 
-const current = () => window.location.hash.replace(/^#\/?/, '') as keyof typeof ROUTES;
+  useEffect(() => {
+    if (authPage && !loading && session) navigate('/app');
+  }, [authPage, loading, session]);
+
+  if (authPage) return loading ? <Loading /> : <AuthScreen mode={head} />;
+  switch (head) {
+    case 'app':
+    case 'join':
+      return <ProductApp />;
+    case 'verify':
+      return <VerifyScreen token={rest[0] ?? ''} />;
+    case 'ios':
+      return <CadenIOS />;
+    case 'thumbnail':
+      return <Thumbnail />;
+    default:
+      return <Home />;
+  }
+}
 
 export function App() {
-  const [route, setRoute] = useState(current);
-  useEffect(() => {
-    const onHash = () => setRoute(current());
-    window.addEventListener('hashchange', onHash);
-    return () => window.removeEventListener('hashchange', onHash);
-  }, []);
-  const View = ROUTES[route] ?? Home;
-  return <View />;
+  return (
+    <AuthProvider>
+      <Routes />
+    </AuthProvider>
+  );
 }

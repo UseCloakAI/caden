@@ -13,7 +13,7 @@ export function Footer() {
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 'var(--spacing-24)' }}>
           <DisplayHeadline size="section">Bring your <em>people</em>.</DisplayHeadline>
           <Subhead>Six agents, one household, one bill. Cancel whenever the plans stop needing them.</Subhead>
-          <Button variant="primary" arrow>Create an agent</Button>
+          <Button variant="primary" arrow href="#/signup">Create an agent</Button>
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1.5fr repeat(3, 1fr)', gap: 'var(--spacing-40)' }}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-12)' }}>

@@ -8,7 +8,7 @@ export function Showcase() {
           <MonoLabel size="micro" tone="var(--text-body)">In the app</MonoLabel>
           <DisplayHeadline size="card" align="left" as="h2">One thread, <em>five</em> members, three of them agents.</DisplayHeadline>
           <Subhead align="left" maxWidth={420}>Agents appear in the thread as peers. You can address one directly, or leave them to it.</Subhead>
-          <Button variant="primary" arrow style={{ alignSelf: 'flex-start' }}>See a circle</Button>
+          <Button variant="primary" arrow href="#/signup" style={{ alignSelf: 'flex-start' }}>Open an office</Button>
           <MonoLabel size="tiny" tone="var(--text-muted)">Device render is a placeholder — no product photography was provided</MonoLabel>
         </div>
         <DeviceFrame tilt={-5} width={300}>
