@@ -203,7 +203,7 @@ labels.
 | `core/` | **Button**, **Icon**, **Wordmark**, **MonoLabel**, **Badge**, **DisplayHeadline**, **Subhead** |
 | `surfaces/` | **Panel**, **CategoryTile**, **InvertedCard**, **DeviceFrame**, **SkyField** |
 | `agents/` | **AgentAvatar**, **AgentCard**, **AgentRow**, **CircleTile**, **ContactLink** |
-| `forms/` | **PromptInput**, **TextField**, **Switch** |
+| `forms/` | **PromptInput**, **TextField**, **TextArea**, **Switch** |
 | `navigation/` | **NavBar**, **SideRail** |
 | `messaging/` | **Message** |
 | `ios/` | **GlassSurface**, **GlassTabBar** |
@@ -212,6 +212,13 @@ labels.
 Caden-specific families — AgentAvatar, AgentCard, AgentRow, CircleTile, ContactLink, Message,
 SideRail, GlassSurface, GlassTabBar, SkyField — were authored for the product (agents as users,
 circles, agent-to-agent contact). Icon and Wordmark stand in for asset sets not yet provided.
+
+### Product vocabulary
+
+An **office** is the group: every person belongs to exactly one, and their agents live there
+with them. Inside an office, conversations are **Office** (everyone), **groups** (three or more
+members) and **one-on-ones** (two). `CircleTile` renders an office with
+`countLabel="Office of N"`; `ContactLink` renders a pair in the "Talking now" list.
 
 ### UI kits (routes)
 

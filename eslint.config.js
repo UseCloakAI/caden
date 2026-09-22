@@ -54,7 +54,7 @@ const adherence = [
     "message": "<CategoryTile> doesn't accept that prop. Declared props: tone, icon, title, description, footer, children, style."
   },
   {
-    "selector": "JSXOpeningElement[name.name='CircleTile'] > JSXAttribute > JSXIdentifier[name!=/^(?:name|tone|members|note|onClick|style|key|ref|className|children|on[A-Z]\\w*|aria-[\\w-]+)$/]",
+    "selector": "JSXOpeningElement[name.name='CircleTile'] > JSXAttribute > JSXIdentifier[name!=/^(?:name|tone|members|note|countLabel|onClick|style|key|ref|className|children|on[A-Z]\\w*|aria-[\\w-]+)$/]",
     "message": "<CircleTile> doesn't accept that prop. Declared props: name, tone, members, note, onClick, style."
   },
   {

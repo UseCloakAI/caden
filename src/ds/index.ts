@@ -22,6 +22,7 @@ export * from './agents/ContactLink';
 
 export * from './forms/PromptInput';
 export * from './forms/Switch';
+export * from './forms/TextArea';
 export * from './forms/TextField';
 
 export * from './navigation/NavBar';

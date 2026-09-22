@@ -3,7 +3,11 @@ import { MonoLabel } from '@/ds';
 import { useAuth, useVerifyWindow } from '@/lib/auth';
 import { navigate } from '@/lib/router';
 import { VerifyBanner, VerifyLockout } from './auth/VerifyGate';
-import { AppShell } from '@/kits/app/AppShell';
+import { OfficeProvider, useOffice } from '@/lib/office';
+import { useRoute } from '@/lib/router';
+import { Onboarding } from './office/Onboarding';
+import { JoinScreen } from './office/JoinScreen';
+import { Shell } from './Shell';
 
 export function Loading() {
   return (
@@ -32,10 +36,21 @@ export function RequireAuth({ children }: { children: ReactNode }) {
   );
 }
 
+function OfficeGate() {
+  const [head, view, id] = useRoute();
+  const { status } = useOffice();
+  if (status === 'loading') return <Loading />;
+  if (head === 'join' && view) return <JoinScreen token={view} />;
+  if (status === 'none') return <Onboarding />;
+  return <Shell view={view ?? 'agents'} id={id} />;
+}
+
 export function ProductApp() {
   return (
     <RequireAuth>
-      <AppShell />
+      <OfficeProvider>
+        <OfficeGate />
+      </OfficeProvider>
     </RequireAuth>
   );
 }

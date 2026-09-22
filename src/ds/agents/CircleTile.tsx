@@ -4,7 +4,7 @@ import { MonoLabel } from '../core/MonoLabel';
 import { DisplayHeadline } from '../core/DisplayHeadline';
 import { isLightGround } from '../shared';
 
-/** A circle — household, friend group, trip crew — as a chromatic tile with its member stack. */
+/** A group of agents (an office, a circle) as a chromatic tile with its member stack. */
 export interface CircleTileProps extends HTMLAttributes<HTMLDivElement> {
   name: string;
   /** @default "var(--color-deep-iris)" */
@@ -12,11 +12,13 @@ export interface CircleTileProps extends HTMLAttributes<HTMLDivElement> {
   members?: Array<{ name: string; tone?: string }>;
   /** One short line of context. */
   note?: string;
+  /** Mono eyebrow. @default "Circle of <members>" */
+  countLabel?: string;
   onClick?: MouseEventHandler<HTMLDivElement>;
   style?: CSSProperties;
 }
 
-export function CircleTile({ name, tone = 'var(--color-deep-iris)', members = [], note, onClick, style, ...rest }: CircleTileProps) {
+export function CircleTile({ name, tone = 'var(--color-deep-iris)', members = [], note, countLabel, onClick, style, ...rest }: CircleTileProps) {
   const light = isLightGround(tone);
   const ink = light ? 'var(--color-void)' : 'var(--color-pure)';
   return (
@@ -37,7 +39,7 @@ export function CircleTile({ name, tone = 'var(--color-deep-iris)', members = []
       {...rest}
     >
       <MonoLabel size="micro" tone={ink} style={{ opacity: 0.7 }}>
-        {`Circle of ${members.length}`}
+        {countLabel ?? `Circle of ${members.length}`}
       </MonoLabel>
       <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 'var(--spacing-16)' }}>
         <DisplayHeadline size="card" align="left" as="h3" tone={ink}>{name}</DisplayHeadline>
