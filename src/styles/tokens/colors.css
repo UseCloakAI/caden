@@ -1,0 +1,70 @@
+:root{
+  /* Chromatic — agent identity + full-bleed category tiles ONLY */
+  --color-iris-gleam:#847dff;
+  --color-cyan-signal:#00b3dd;
+  --color-pale-iris:#d1c9ff;
+  --color-deep-iris:#4b49aa;
+  --color-orchid-bloom:#dd90d8;
+  --color-periwinkle:#90b8f0;
+  /* Blues lifted straight out of the Sky Atmosphere gradient */
+  --color-horizon:#408ac1;
+  --color-cobalt:#1a4788;
+  --color-midnight-blue:#131d27;
+
+  /* Neutrals — the room */
+  --color-obsidian:#0f1011;
+  --color-abyss:#090a0b;
+  --color-graphite:#2e2e2e;
+  --color-steel:#3f4041;
+  --color-silver:#cacaca;
+  --color-fog:#6a6b6b;
+  --color-ash:#9f9fa0;
+  --color-cloud:#f5f5f7;
+  --color-pure:#ffffff;
+  --color-void:#000000;
+
+  /* Surfaces */
+  --surface-canvas:var(--color-obsidian);
+  --surface-sunken:var(--color-abyss);
+  --surface-card:var(--color-graphite);
+  --surface-hover:var(--color-steel);
+  --surface-inverted:var(--color-silver);
+  --surface-glass:rgba(255,255,255,0.1);
+  --surface-glass-strong:rgba(255,255,255,0.2);
+  --surface-chip:rgba(255,255,255,0.12);
+
+  /* Text */
+  --text-primary:var(--color-pure);
+  --text-heading:var(--color-cloud);
+  --text-body:var(--color-ash);
+  --text-muted:var(--color-fog);
+  --text-on-light:var(--color-void);
+  --text-on-chromatic:var(--color-pure);
+
+  /* Lines */
+  --border-hairline:1px solid rgba(255,255,255,0.1); /* @kind other */
+  --border-glass:1px solid rgba(255,255,255,0.15); /* @kind other */
+  --border-solid:1px solid var(--color-pure); /* @kind other */
+
+  /* Actions */
+  --action-fill:var(--color-pure);
+  --action-fill-text:var(--color-void);
+  --action-fill-hover:var(--color-cloud);
+
+  /* Agent identity ramp — assigned per agent, in order, then wraps */
+  --agent-1:var(--color-periwinkle);
+  --agent-2:var(--color-horizon);
+  --agent-3:var(--color-deep-iris);
+  --agent-4:var(--color-cobalt);
+  --agent-5:var(--color-iris-gleam);
+  --agent-6:var(--color-orchid-bloom);
+
+  /* Data signal — charts, sparklines, activity strokes. Never body text, never large fills. */
+  --data-signal:var(--color-cyan-signal);
+
+  /* The two legitimate gradients */
+  --gradient-chrome:linear-gradient(135deg,rgb(43,43,44),rgb(19,19,19)); /* @kind color */
+  --gradient-atmosphere:linear-gradient(rgb(15,16,17),rgb(24,42,60) 16%,rgb(38,98,178) 34%,rgb(88,168,219) 66%,rgb(133,200,235) 102%); /* @kind color */
+  /* Fractal-noise grain, overlaid on the sky at 32–42% so the horizon reads as pushed film */
+  --texture-noise:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.7' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='200' height='200' filter='url(%23n)' opacity='0.85'/%3E%3C/svg%3E"); /* @kind other */
+}

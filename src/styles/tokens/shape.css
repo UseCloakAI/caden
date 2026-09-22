@@ -1,0 +1,20 @@
+:root{
+  --radius-sm:8px;
+  --radius-md:12px;
+  --radius-lg:16px;
+  --radius-xl:24px;
+  --radius-tile:30px;
+  --radius-pill:9999px;
+
+  --radius-buttons:var(--radius-sm);
+  --radius-inputs:var(--radius-sm);
+  --radius-navitems:var(--radius-sm);
+  --radius-cards:var(--radius-lg);
+  --radius-statblocks:var(--radius-lg);
+  --radius-featurecards:var(--radius-tile);
+  --radius-categorytiles:var(--radius-tile);
+
+  /* One shadow exists in the system. Elevation is color stepping, not depth. */
+  --shadow-lg:rgba(0,0,0,0.2) 0px 18px 20px 0px;
+  --blur-glass:blur(24px); /* @kind other */
+}

@@ -1,0 +1,10 @@
+:root{
+  --ease-standard:ease; /* @kind other */
+  --ease-atmosphere:cubic-bezier(0.455,0.03,0.515,0.955); /* @kind other */
+  --duration-state:0.2s; /* @kind other */
+  --duration-reveal:2.5s; /* @kind other */
+  --transition-state:background-color var(--duration-state) var(--ease-standard),opacity var(--duration-state) var(--ease-standard),border-color var(--duration-state) var(--ease-standard);
+}
+@keyframes cadenFadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+@keyframes cadenBorderTurn{to{transform:rotate(360deg)}}
+@keyframes cadenPulse{0%,100%{opacity:.35}50%{opacity:1}}

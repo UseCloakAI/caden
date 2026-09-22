@@ -1,0 +1,7 @@
+/* Caden webfonts.
+   No licensed binaries were provided with the brand source, so the three type voices are
+   served from Google Fonts as flagged substitutions (see readme.md > Typography).
+   Voices are tuned toward Claude's editorial-serif + geometric-grotesque pairing:
+   Newsreader (Tiempos/Copernicus-adjacent), Karla (Styrene-adjacent), IBM Plex Mono.
+   Replace these @import lines with local @font-face rules once real files land in assets/fonts/. */
+@import url("https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,300;0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,300;1,6..72,400;1,6..72,500;1,6..72,600&family=Karla:wght@300;400;500&family=IBM+Plex+Mono:wght@400;500&display=swap");

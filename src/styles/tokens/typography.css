@@ -1,0 +1,20 @@
+:root{
+  /* Three voices: serif display for emotion, sans for UI, mono for data */
+  --font-display:'Newsreader',"Lyon Display",ui-serif,Georgia,serif;
+  --font-sans:'Karla',"Suisse Int'l",ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  --font-mono:'IBM Plex Mono','Roboto Mono',ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+
+  --font-weight-light:300;
+  --font-weight-regular:400;
+  --font-weight-medium:500;
+
+  --text-display:96px;      --leading-display:0.9;
+  --text-display-sm:80px;   --leading-display-sm:1;
+  --text-heading-lg:38px;   --leading-heading-lg:0.9;
+  --text-subheading:18px;   --leading-subheading:1.5;   --tracking-subheading:0px;
+  --text-body-md:16px;      --leading-body-md:1.5;
+  --text-body-sm:14px;      --leading-body-sm:1.67;
+  --text-mono-label:12px;   --leading-mono-label:2;     --tracking-mono-label:0.021em;
+  --text-mono-micro:11px;   --leading-mono-micro:1.35;  --tracking-mono-micro:0.182em;
+  --text-mono-tiny:10px;    --leading-mono-tiny:1.35;   --tracking-mono-tiny:0.016em;
+}
