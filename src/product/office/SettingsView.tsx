@@ -8,26 +8,24 @@ import { navigate } from '@/lib/router';
 import { ErrorLine, PageHeader, Section, TonePicker } from '../ui';
 import { KeyPool } from './KeyPool';
 
-const DAILY_TOKENS = 200_000;
-
 interface Usage {
   groq: number;
-  anthropic: number;
+  claude: number;
 }
 
-/** One provider's slice of the shared daily budget — both bars scale to the same total, so their fills stay comparable. */
-function UsageBar({ label, used }: { label: string; used: number | null }) {
-  const share = used == null ? 0 : Math.min(1, used / DAILY_TOKENS);
+/** Groq and Claude now keep separate daily budgets, each with its own cap — see usage_context(). */
+function UsageBar({ label, used, cap }: { label: string; used: number | null; cap: number | null }) {
+  const share = used == null || !cap ? 0 : Math.min(1, used / cap);
   return (
     <div className="p-usage">
       <div className="p-usage__label">
         <MonoLabel size="tiny" tone="var(--text-body)">{label}</MonoLabel>
         <span className="p-usage__value">
           {used == null ? '—' : <AnimatedNumber value={used} />}
-          <MonoLabel size="tiny" tone="var(--text-muted)">{` / ${DAILY_TOKENS.toLocaleString()}`}</MonoLabel>
+          <MonoLabel size="tiny" tone="var(--text-muted)">{cap ? ` / ${cap.toLocaleString()}` : ''}</MonoLabel>
         </span>
       </div>
-      <span className="p-meter-bar" role="meter" aria-valuemin={0} aria-valuemax={DAILY_TOKENS} aria-valuenow={used ?? 0} aria-label={`${label} tokens used today`}>
+      <span className="p-meter-bar" role="meter" aria-valuemin={0} aria-valuemax={cap ?? 0} aria-valuenow={used ?? 0} aria-label={`${label} tokens used today`}>
         <span style={{ transform: `scaleX(${share})` }} />
       </span>
     </div>
@@ -43,21 +41,26 @@ export function SettingsView() {
   const [officeNote, setOfficeNote] = useState(office?.note ?? '');
   const [officeTone, setOfficeTone] = useState(office?.tone ?? 'var(--color-horizon)');
   const [usage, setUsage] = useState<Usage | null>(null);
+  const [caps, setCaps] = useState<{ groq: number | null; claude: number | null }>({ groq: null, claude: null });
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState<'profile' | 'office' | null>(null);
   const [leaving, setLeaving] = useState(false);
 
   useEffect(() => {
-    const since = new Date(Date.now() - 86400_000).toISOString();
+    if (!profile?.id) return;
     supabase
-      .from('agent_runs')
-      .select('input_tokens, output_tokens, provider')
-      .eq('owner_id', profile?.id ?? '')
-      .gte('created_at', since)
+      .rpc('usage_context')
+      .maybeSingle()
+      .then(({ data: ctx }) => {
+        setCaps({ groq: (ctx as { groq_max?: number } | null)?.groq_max ?? null, claude: (ctx as { claude_max?: number } | null)?.claude_max ?? null });
+        const resetAt = (ctx as { reset_at?: string } | null)?.reset_at;
+        const since = new Date(Math.max(resetAt ? Date.parse(resetAt) : 0, Date.now() - 86400_000)).toISOString();
+        return supabase.from('agent_runs').select('input_tokens, output_tokens, provider').eq('owner_id', profile.id).gte('created_at', since);
+      })
       .then(({ data }) => {
-        const sums: Usage = { groq: 0, anthropic: 0 };
+        const sums: Usage = { groq: 0, claude: 0 };
         for (const r of (data ?? []) as { input_tokens: number; output_tokens: number; provider: string | null }[]) {
-          const key = r.provider === 'groq' ? 'groq' : 'anthropic'; // runs from before the provider column existed were all Claude.
+          const key = r.provider === 'groq' ? 'groq' : 'claude'; // runs from before the provider column existed were all Claude.
           sums[key] += r.input_tokens + r.output_tokens;
         }
         setUsage(sums);
@@ -126,10 +129,10 @@ export function SettingsView() {
         </Section>
       ) : null}
 
-      <Section title="Usage · last 24 hours" description="Tokens your agents used, by provider. Groq runs first and is free; Claude only picks up a turn when every Groq key is resting, so it shares the same daily budget.">
+      <Section title="Usage · last 24 hours" description="Tokens your agents used, by provider. Groq runs first and is free, so its budget is generous — mainly there to catch a runaway loop. Claude only picks up a turn when every Groq key is resting, and keeps a smaller budget since it costs real money.">
         <div className="p-usage-group">
-          <UsageBar label="Groq" used={usage?.groq ?? null} />
-          <UsageBar label="Claude" used={usage?.anthropic ?? null} />
+          <UsageBar label="Groq" used={usage?.groq ?? null} cap={caps.groq} />
+          <UsageBar label="Claude" used={usage?.claude ?? null} cap={caps.claude} />
         </div>
       </Section>
 

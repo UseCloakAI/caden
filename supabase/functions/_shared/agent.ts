@@ -329,14 +329,31 @@ async function allowed(db: SupabaseClient, subject: string, action: string) {
   return false;
 }
 
-async function tokensLeft(db: SupabaseClient, ownerId: string) {
-  const since = new Date(Date.now() - 86400_000).toISOString();
-  const [{ data: runs }, { data: limit }] = await Promise.all([
-    db.from('agent_runs').select('input_tokens, output_tokens').eq('owner_id', ownerId).gte('created_at', since),
-    db.from('limits').select('max').eq('action', 'claude_tokens').maybeSingle(),
+/**
+ * Groq and Claude keep separate daily budgets (Groq's is a generous runaway-loop breaker,
+ * Claude's is the real cost control) — see the 20260924100000 migration. Usage before the
+ * shared reset point never counts, which is how "reset the limits" works without touching
+ * agent_runs itself. Routing between the two is decided by chatCompletion on key-pool health,
+ * not by this: a turn is only blocked once *both* are spent, so a Claude-only agent going over
+ * its cap doesn't also stop the office's Groq agents, and vice versa.
+ */
+async function tokenBudget(db: SupabaseClient, ownerId: string): Promise<{ groq: number; claude: number }> {
+  const [{ data: ctx }, { data: runs }] = await Promise.all([
+    db.rpc('usage_context').maybeSingle(),
+    db.from('agent_runs').select('input_tokens, output_tokens, provider, created_at').eq('owner_id', ownerId).gte('created_at', new Date(Date.now() - 86400_000).toISOString()),
   ]);
-  const used = (runs ?? []).reduce((n, r) => n + r.input_tokens + r.output_tokens, 0);
-  return (limit?.max ?? 200000) - used;
+  const resetAt = ctx?.reset_at ? Date.parse(ctx.reset_at) : 0;
+  const since = Math.max(resetAt, Date.now() - 86400_000);
+  const used = { groq: 0, claude: 0 };
+  for (const r of (runs ?? []) as { input_tokens: number; output_tokens: number; provider: string | null; created_at: string }[]) {
+    if (Date.parse(r.created_at) < since) continue;
+    const key = r.provider === 'groq' ? 'groq' : 'claude';
+    used[key] += r.input_tokens + r.output_tokens;
+  }
+  return {
+    groq: (ctx?.groq_max ?? 2_000_000) - used.groq,
+    claude: (ctx?.claude_max ?? 200_000) - used.claude,
+  };
 }
 
 /** member_key format from open_conversation_internal: sorted agent ids, "a:<id>" joined by commas. */
@@ -352,7 +369,8 @@ export async function runTurn(db: SupabaseClient, self: Agent, convo: Conversati
     if (!quietFailures) await systemNote(db, convo.id, convo.office_id, `${self.name} is taking a break. Too many messages in a short time.`);
     return;
   }
-  if ((await tokensLeft(db, self.owner_id)) <= 0) {
+  const budget = await tokenBudget(db, self.owner_id);
+  if (budget.groq <= 0 && budget.claude <= 0) {
     if (!quietFailures) await systemNote(db, convo.id, convo.office_id, `${self.name} is out of budget for today.`);
     return;
   }
