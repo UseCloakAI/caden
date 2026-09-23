@@ -2,7 +2,7 @@
 // to do (Groq first, Claude last resort — see providers.ts), and carry out its tool calls.
 import type Anthropic from 'npm:@anthropic-ai/sdk@0';
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
-import { chatCompletion, type ChatResult } from './providers.ts';
+import { AllBrainsFailed, chatCompletion, type ChatResult } from './providers.ts';
 import { webSearch, type SearchResult } from './search.ts';
 
 const MAX_BODY = 4000;
@@ -10,10 +10,6 @@ const HISTORY_WINDOW = 12;
 const COMPACT_THRESHOLD = 24;
 const MEMORY_COMPACT_AT = 4000;
 const BUCKET = 'agent-files';
-/** How many times a single turn can search before it's forced to act on what it has — a task
- *  can take a few steps, but not loop forever; each round is its own model call and, for a
- *  real search, its own Tavily credit. */
-const MAX_SEARCH_ROUNDS = 3;
 
 export interface Agent {
   id: string;
@@ -23,6 +19,9 @@ export interface Agent {
   handle: string;
   persona: string;
   status: string;
+  chip_id: string | null;
+  last_model?: string | null;
+  model_error_at?: string | null;
 }
 export interface Conversation {
   id: string;
@@ -58,7 +57,7 @@ export type Trigger = { kind: 'message'; message: Msg } | { kind: 'routine'; ins
 export async function loadOffice(db: SupabaseClient, officeId: string): Promise<Office> {
   const [o, a, m, c] = await Promise.all([
     db.from('offices').select('id, name').eq('id', officeId).single(),
-    db.from('agents').select('id, owner_id, office_id, name, handle, persona, status').eq('office_id', officeId),
+    db.from('agents').select('id, owner_id, office_id, name, handle, persona, status, chip_id, last_model, model_error_at').eq('office_id', officeId),
     db.from('office_members').select('user_id, profile:profiles(display_name)').eq('office_id', officeId),
     db
       .from('conversations')
@@ -86,7 +85,7 @@ export function mentionedAgents(body: string, agents: Agent[]): Agent[] {
 }
 
 /**
- * Who reads a new message. Every reader then chooses: stay quiet, react, reply, or react and reply.
+ * Who reads a new message. Every reader reacts, then chooses whether to say or do more.
  * Office thread: mentioned agents; a person's unaddressed post is read by every active agent.
  * Groups: every agent in the group. One-on-ones: the other agent.
  */
@@ -251,7 +250,21 @@ async function maybeCompact(db: SupabaseClient, convo: Conversation, office: Off
 
 // ─── Tools ───────────────────────────────────────────────────────────────────
 
-const TOOLS: Anthropic.Tool[] = [
+export const REACTIONS = ['seen', 'on_it', 'agree', 'disagree', 'thanks', 'done'] as const;
+
+/** Step 1 of every message turn: the glance. Always one reaction, shown before anything else. */
+const REACT_TOOL: Anthropic.Tool = {
+  name: 'react',
+  description: 'Acknowledge the latest message with one reaction, the way a person reacts to a text.',
+  input_schema: {
+    type: 'object',
+    properties: { reaction: { type: 'string', enum: [...REACTIONS] } },
+    required: ['reaction'],
+    additionalProperties: false,
+  },
+};
+
+const ACTION_TOOLS: Anthropic.Tool[] = [
   {
     name: 'reply',
     description: 'Post a message in the conversation you were woken in.',
@@ -276,12 +289,12 @@ const TOOLS: Anthropic.Tool[] = [
     input_schema: { type: 'object', properties: { body: { type: 'string' } }, required: ['body'], additionalProperties: false },
   },
   {
-    name: 'react',
-    description: 'Acknowledge the latest message with a one-word reaction, visible to everyone. Can be used alone or alongside reply.',
+    name: 'post_in',
+    description: 'Post in one of your other conversations, by its number from the "Your other conversations" list. Use it to answer someone waiting there or to report back.',
     input_schema: {
       type: 'object',
-      properties: { reaction: { type: 'string', enum: ['seen', 'agree', 'on_it', 'done', 'thanks', 'disagree'] } },
-      required: ['reaction'],
+      properties: { conversation: { type: 'integer', description: 'The [number] from the list.' }, body: { type: 'string' } },
+      required: ['conversation', 'body'],
       additionalProperties: false,
     },
   },
@@ -293,23 +306,30 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'search_web',
     description:
-      'Search the web for something outside what you already know — a current price, hours, news, a fact your training would not have. Call it alone: you will see the results and can search again with a refined query if the first pass was not enough, or act on what you have. Do not also reply or post in the same call; stop searching once you have enough to act.',
+      'Search the web for something outside what you already know — a current price, hours, news, a fact your training would not have. The results come back before your next step, so you can search again with a refined query if the first pass was not enough, then reply or post once you actually have the answer.',
     input_schema: { type: 'object', properties: { query: { type: 'string', description: 'A short, specific search query.' } }, required: ['query'], additionalProperties: false },
   },
   {
-    name: 'stay_quiet',
-    description: 'Read the conversation and do nothing this turn.',
+    name: 'done',
+    description: 'Finish this turn. Your reaction and anything you already sent stay visible.',
     input_schema: { type: 'object', properties: { reason: { type: 'string' } }, required: ['reason'], additionalProperties: false },
   },
 ];
-
-/** The second round, after a search, never offers search_web again — the model must act on what it found. */
-const TOOLS_AFTER_SEARCH = TOOLS.filter((t) => t.name !== 'search_web');
 
 function formatSearchResults(found: SearchResult): string {
   const lines = found.results.map((r, i) => `${i + 1}. ${r.title} — ${r.snippet} (${r.url})`);
   return [found.answer ? `Summary: ${found.answer}` : null, ...lines].filter(Boolean).join('\n') || 'No results found.';
 }
+
+/** Model calls per turn: the first does react + act together; at most two follow-ups. */
+const MAX_STEPS = 3;
+/** The beat between a reaction showing and the words that follow it. */
+const REACT_BEAT_MS = 800;
+
+const FIRST_STEP = `Call react exactly once for the latest message, and in the same response call whatever else you will do this turn:
+- seen: read it, nothing to add. on_it: you are acting on it. agree / disagree: you have a view. thanks / done: where they fit.
+- Then reply, message other agents, post somewhere, remember — or call done if the reaction says enough.
+At most one message per conversation this turn.`;
 
 async function post(db: SupabaseClient, conversationId: string, self: Agent, body: string, hop: number) {
   const text = body.trim().slice(0, MAX_BODY);
@@ -333,9 +353,9 @@ async function allowed(db: SupabaseClient, subject: string, action: string) {
  * Groq and Claude keep separate daily budgets (Groq's is a generous runaway-loop breaker,
  * Claude's is the real cost control) — see the 20260924100000 migration. Usage before the
  * shared reset point never counts, which is how "reset the limits" works without touching
- * agent_runs itself. Routing between the two is decided by chatCompletion on key-pool health,
- * not by this: a turn is only blocked once *both* are spent, so a Claude-only agent going over
- * its cap doesn't also stop the office's Groq agents, and vice versa.
+ * agent_runs itself. Routing between the two is decided by chatCompletion on key-pool/chip
+ * health, not by this: a turn is only blocked once *both* are spent, so a Claude-only agent
+ * going over its cap doesn't also stop the office's Groq agents, and vice versa.
  */
 async function tokenBudget(db: SupabaseClient, ownerId: string): Promise<{ groq: number; claude: number }> {
   const [{ data: ctx }, { data: runs }] = await Promise.all([
@@ -361,6 +381,27 @@ function agentKey(ids: string[]) {
   return [...new Set(ids)].sort().map((id) => `a:${id}`).join(',');
 }
 
+/** Logs one model call against the agent's owner. */
+async function logRun(db: SupabaseClient, self: Agent, convo: Conversation, trigger: Trigger, result: ChatResult) {
+  await db.from('agent_runs').insert({
+    agent_id: self.id,
+    owner_id: self.owner_id,
+    office_id: convo.office_id,
+    conversation_id: convo.id,
+    trigger: trigger.kind,
+    input_tokens: result.usage.input_tokens,
+    output_tokens: result.usage.output_tokens,
+    provider: result.provider,
+    model: result.model,
+  });
+}
+
+/**
+ * One agent turn, played out like a person: one model call decides the reaction and the actions
+ * together; the reaction lands first, the words a beat later. A follow-up call only happens when a
+ * one-on-one still needs words, or to tell the person who asked what was done elsewhere.
+ * Nothing posts twice to the same conversation in one turn.
+ */
 export async function runTurn(db: SupabaseClient, self: Agent, convo: Conversation, office: Office, trigger: Trigger) {
   const hop = trigger.kind === 'message' ? trigger.message.hop + 1 : 1;
   const quietFailures = trigger.kind === 'message' && trigger.message.hop > 0;
@@ -375,17 +416,28 @@ export async function runTurn(db: SupabaseClient, self: Agent, convo: Conversati
     return;
   }
 
-  const [soul, memory, transcript] = await Promise.all([syncSoul(db, self, office), readFile(db, `memory/${self.id}.md`), buildTranscript(db, convo, office)]);
+  const elsewhere = office.conversations
+    .filter((c) => c.id !== convo.id && (c.kind === 'office' || c.participants.some((p) => p.agent_id === self.id)))
+    .slice(0, 8);
+  const [soul, memory, transcript, lastElsewhere] = await Promise.all([
+    syncSoul(db, self, office),
+    readFile(db, `memory/${self.id}.md`),
+    buildTranscript(db, convo, office),
+    lastMessages(db, elsewhere.map((c) => c.id)),
+  ]);
 
   const roster = office.agents
     .filter((a) => a.id !== self.id)
     .map((a) => `- ${a.name} (@${a.handle}), belongs to ${office.people.get(a.owner_id) ?? 'someone'}${a.status === 'Paused' ? ', paused' : ''}. ${a.persona.slice(0, 160)}`)
     .join('\n');
   const people = [...office.people.values()].map((n) => `- ${n}`).join('\n');
-  const others = office.conversations
-    .filter((c) => c.id !== convo.id && c.kind !== 'office' && c.participants.some((p) => p.agent_id === self.id))
-    .slice(0, 8)
-    .map((c) => `- ${label(c, office, self)}`)
+  const others = elsewhere
+    .map((c, i) => {
+      const last = lastElsewhere.get(c.id);
+      if (!last) return `[${i + 1}] ${label(c, office, self)} — quiet`;
+      const waiting = last.author_user_id && last.kind === 'you' ? ' — a person is waiting on a reply' : '';
+      return `[${i + 1}] ${label(c, office, self)} — last, ${ago(last.created_at)}: ${speaker(last, office)}: "${last.body.slice(0, 120)}"${waiting}`;
+    })
     .join('\n');
 
   const system = `${soul}
@@ -396,145 +448,205 @@ ${roster || '- None yet.'}
 People:
 ${people}
 
-How you act: you only act through your tools. Every turn, first read the conversation, then choose. You can:
-- stay_quiet: read it and do nothing.
-- react: acknowledge the latest message with one word, without replying.
-- reply: answer in the conversation you were woken in.
-- react and reply together, when both help.
-- message_agents: talk with specific agents away from this conversation. One handle opens a one-on-one; several open a group. Call it more than once to run separate one-on-ones in parallel.
-- post_to_office: something everyone in the office should see.
-- remember: save a durable fact for your own future turns.
-- search_web: look something up you do not already know. Call it by itself; you will see the results and can search again or act next.
-A task can take a few steps: search, look at what came back, search again if it was not enough, then reply or post once you actually have the answer. Do not act on a half-finished search, and do not keep searching past what you need.
-React alone when a reply would add nothing, for example a plain update, an agreement or thanks. Reply when you have something to add or were asked something. Stay quiet when the message is not meant for you or others have it covered.
-Coordinate with other agents when a task involves what they look after, then report back where you were asked. Do not repeat what others already said or invent facts about people's plans; ask the agent or person who would know, or search_web if it's something the web would know instead.`;
+How you act: like a person in a group chat, not a bot. You only act through your tools.
+- Every message you are woken by gets a reaction. You never leave someone on read.
+- A reaction alone is a complete answer when words would add nothing: a plain update, an agreement, a thanks, or a point someone already made.
+- In a one-on-one you answer in words as well.
+- Say each thing once. Never repeat yourself or restate what someone else just said; react agree instead.
+- Do things now, never announce them. Instead of "heading to the main chat", post there. Instead of "I'll ask Joe", message Joe.
+- When a person is waiting on you somewhere else, answer them there.
+- When someone asks you to do something with another agent, do it, then tell the person who asked what you did.
+- Don't @mention people; talk to them by name. Only @mention an agent when you need that agent to answer.
+Do not invent facts about people's plans; ask the agent or person who would know.`;
 
   const task =
     trigger.kind === 'routine'
       ? `Scheduled routine from your owner, due now: ${trigger.instruction}\nCarry it out. Post the result where it belongs.`
-      : 'The latest message above is for you. Decide what to do.';
+      : 'The latest message above is for you.';
 
-  const userContent = `You are in ${label(convo, office, self)}.
+  const context = `You are in ${label(convo, office, self)}.
 
 Recent messages, oldest first:
 ${transcript}
 
-Your other open conversations:
+Your other conversations:
 ${others || '- None.'}
 
 ${task}`;
 
-  const logRun = (r: ChatResult) =>
-    db.from('agent_runs').insert({
-      agent_id: self.id,
-      owner_id: self.owner_id,
-      office_id: convo.office_id,
-      conversation_id: convo.id,
-      trigger: trigger.kind,
-      input_tokens: r.usage.input_tokens,
-      output_tokens: r.usage.output_tokens,
-      provider: r.provider,
-      model: r.model,
-    });
+  const incoming = trigger.kind === 'message' ? trigger.message : null;
+  const fromPerson = !!incoming && incoming.author_agent_id == null;
+  // One-on-ones: people always get words back; between agents, only the first exchange must.
+  const mustReply = convo.kind === 'direct' && !!incoming && (fromPerson || incoming.hop <= 1);
+  const actions: string[] = [];
+  const postedTo = new Set<string>(); // one message per conversation per turn, so nothing doubles up
+  let reacted = !incoming;
+  let delegated = false;
+  let onlyReacted = false; // the model gave just the reaction and hasn't said whether more follows
+  let pendingSearch = false; // last step called search_web; results are in doneSoFar, give it a beat to act on them
 
-  let result: ChatResult;
-  try {
-    result = await chatCompletion(db, system, userContent, TOOLS);
-  } catch (err) {
-    console.error('chatCompletion failed', err instanceof Error ? err.message : err);
-    if (!quietFailures) await systemNote(db, convo.id, convo.office_id, `${self.name} could not respond just now.`);
-    return;
-  }
-  await logRun(result);
+  const say = async (conversationId: string, body: string | undefined) => {
+    if (!body?.trim() || postedTo.has(conversationId)) return false;
+    postedTo.add(conversationId);
+    await post(db, conversationId, self, body, hop);
+    return true;
+  };
 
-  // A search doesn't end the turn — the model asked to look something up, so give it the
-  // results and let it decide what to do next as a fresh, separately-logged model call. That
-  // next call can search again with a better query, so a task can take a few steps ("search,
-  // that wasn't specific enough, search again, now reply") rather than being stuck with
-  // whatever the first query turned up. Bounded so one turn can't loop indefinitely.
-  let context = userContent;
-  for (let round = 1; round <= MAX_SEARCH_ROUNDS; round++) {
-    const searchCall = result.toolUses.find((t) => t.name === 'search_web');
-    const query = (searchCall?.input as { query?: string } | undefined)?.query;
-    if (!searchCall || !query) break; // it has what it needs, or never asked to search
+  for (let step = 0; step < MAX_STEPS; step++) {
+    const repliedHere = postedTo.has(convo.id);
+    let tools: Anthropic.Tool[];
+    let instruction: string;
+    if (step === 0) {
+      tools = incoming ? [REACT_TOOL, ...ACTION_TOOLS] : ACTION_TOOLS;
+      instruction = incoming ? FIRST_STEP : 'Act on the routine: post, message agents, remember — then call done.';
+      if (mustReply) instruction += '\nThis is a one-on-one: include a reply.';
+    } else if (pendingSearch) {
+      tools = ACTION_TOOLS;
+      instruction = 'You have search results above (see what you have done so far). Reply, post, message someone, or search again if that was not enough — or call done.';
+    } else if (onlyReacted && !(mustReply && !repliedHere)) {
+      tools = ACTION_TOOLS;
+      instruction = 'Your reaction is posted. Anything else — a reply, a message, a post — or call done if the reaction said enough.';
+    } else if (mustReply && !repliedHere) {
+      tools = ACTION_TOOLS.filter((t) => t.name === 'reply');
+      instruction = 'You have not answered here yet. Reply in this conversation now, in words.';
+    } else if (delegated && fromPerson && !repliedHere) {
+      tools = ACTION_TOOLS.filter((t) => t.name === 'reply' || t.name === 'done');
+      instruction = 'Tell the person who asked, in one short line, what you just did. Or call done if they already know.';
+    } else break;
 
-    const found = await webSearch(db, query).catch((err) => {
-      console.error('web search failed', err instanceof Error ? err.message : err);
-      return null;
-    });
-    context += found
-      ? `\n\nSearch results for "${query}":\n${formatSearchResults(found)}`
-      : `\n\nYou searched for "${query}" but search is unavailable right now. Answer from what you already know and say plainly you could not look it up.`;
-
-    // The last allowed round can't search again, so the model is forced to act on what it has.
-    const toolsThisRound = round === MAX_SEARCH_ROUNDS ? TOOLS_AFTER_SEARCH : TOOLS;
+    const doneSoFar = actions.length ? `\n\nWhat you have done so far this turn:\n${actions.map((a) => `- ${a}`).join('\n')}` : '';
+    let result: ChatResult;
     try {
-      result = await chatCompletion(db, system, context, toolsThisRound);
+      result = await chatCompletion(db, system, `${context}${doneSoFar}\n\n${instruction}`, tools, self.chip_id);
+      await logRun(db, self, convo, trigger, result);
+      // Only touch the row when something changed; every agents update re-syncs open offices.
+      if (step === 0 && (result.model !== self.last_model || self.model_error_at)) {
+        await db.from('agents').update({ last_model: result.model, model_error: null, model_error_at: null }).eq('id', self.id);
+      }
     } catch (err) {
-      console.error('chatCompletion (search loop) failed', err instanceof Error ? err.message : err);
-      if (!quietFailures) await systemNote(db, convo.id, convo.office_id, `${self.name} could not respond just now.`);
-      return;
-    }
-    await logRun(result);
-  }
-
-  if (!result.toolUses.length) {
-    console.warn('no tool use returned', result.provider, result.model, result.stopReason);
-    return;
-  }
-
-  for (const toolUse of result.toolUses) {
-    const input = toolUse.input as { body?: string; handles?: string[]; reaction?: string; fact?: string };
-    switch (toolUse.name) {
-      case 'react':
-        if (trigger.kind === 'message' && input.reaction) {
-          const { error } = await db
-            .from('message_reactions')
-            .insert({ message_id: trigger.message.id, office_id: convo.office_id, agent_id: self.id, reaction: input.reaction });
-          if (error && error.code !== '23505') console.error('react failed', error.message);
-        }
-        break;
-      case 'remember':
-        if (input.fact) await remember(db, self, input.fact);
-        break;
-      case 'reply':
-        if (input.body) await post(db, convo.id, self, input.body, hop);
-        break;
-      case 'post_to_office': {
-        const officeThread = office.conversations.find((c) => c.kind === 'office');
-        if (officeThread && input.body) await post(db, officeThread.id, self, input.body, hop);
-        break;
+      console.error('turn step failed', err instanceof Error ? err.message : err);
+      if (err instanceof AllBrainsFailed) {
+        await db.from('agents').update({ model_error: `Tried ${err.tried.join(', ')}. ${err.last.slice(0, 200)}`, model_error_at: new Date().toISOString() }).eq('id', self.id);
       }
-      case 'message_agents': {
-        if (!input.body || !Array.isArray(input.handles)) break;
-        const targets = input.handles
-          .map((h) => office.agents.find((a) => a.handle === String(h).replace(/^@/, '').toLowerCase()) ?? mentionedAgents(`@${h}`, office.agents)[0])
-          .filter((a): a is Agent => !!a && a.id !== self.id);
-        if (!targets.length) break;
-        const ids = [self.id, ...targets.map((a) => a.id)];
-        const { data: existing } = await db.from('conversations').select('id').eq('office_id', convo.office_id).eq('member_key', agentKey(ids)).maybeSingle();
-        let targetId = existing?.id as string | undefined;
-        if (!targetId) {
-          if (!(await allowed(db, self.id, 'agent_new_conversation'))) break;
-          const { data, error } = await db.rpc('open_conversation_internal', {
-            p_office: convo.office_id,
-            p_agent_ids: ids,
-            p_user_ids: [],
-            p_by_user: null,
-            p_by_agent: self.id,
-            p_title: null,
-          });
-          if (error) {
-            console.error('open conversation failed', error.message);
-            break;
+      if (step === 0 && !quietFailures) await systemNote(db, convo.id, convo.office_id, `${self.name} could not respond just now.`);
+      break;
+    }
+
+    // The reaction lands first, on its own beat, then whatever else was decided.
+    if (!reacted && incoming) {
+      const picked = (result.toolUses.find((t) => t.name === 'react')?.input as { reaction?: string } | undefined)?.reaction;
+      const reaction = REACTIONS.includes(picked as (typeof REACTIONS)[number]) ? picked! : 'seen';
+      const { error } = await db.from('message_reactions').insert({ message_id: incoming.id, office_id: convo.office_id, agent_id: self.id, reaction });
+      if (error && error.code !== '23505') console.error('react failed', error.message);
+      actions.push(`reacted ${reaction.toUpperCase()} to the latest message`);
+      reacted = true;
+      if (result.toolUses.some((t) => t.name !== 'react' && t.name !== 'done')) await new Promise((r) => setTimeout(r, REACT_BEAT_MS));
+    }
+
+    onlyReacted = step === 0 && !!incoming && result.toolUses.every((t) => t.name === 'react');
+    pendingSearch = result.toolUses.some((t) => t.name === 'search_web');
+    for (const toolUse of result.toolUses) {
+      const input = toolUse.input as { body?: string; handles?: string[]; fact?: string; conversation?: number; query?: string };
+      switch (toolUse.name) {
+        case 'reply':
+          if (await say(convo.id, input.body)) actions.push(`replied here: "${input.body!.slice(0, 140)}"`);
+          break;
+        case 'post_to_office': {
+          const officeThread = office.conversations.find((c) => c.kind === 'office');
+          if (officeThread && (await say(officeThread.id, input.body))) actions.push(`posted to the office: "${input.body!.slice(0, 140)}"`);
+          break;
+        }
+        case 'post_in': {
+          const target = elsewhere[Number(input.conversation) - 1];
+          if (target && (await say(target.id, input.body))) {
+            actions.push(`posted in ${label(target, office, self)}: "${input.body!.slice(0, 140)}"`);
+            delegated = true;
           }
-          targetId = data as string;
+          break;
         }
-        await post(db, targetId, self, input.body, hop);
-        break;
+        case 'message_agents': {
+          const sent = await messageAgents(db, self, convo, office, input.handles, input.body, hop, postedTo);
+          if (sent) {
+            actions.push(`messaged ${sent}: "${(input.body ?? '').slice(0, 140)}"`);
+            delegated = true;
+          }
+          break;
+        }
+        case 'remember':
+          if (input.fact) {
+            await remember(db, self, input.fact);
+            actions.push(`remembered: ${input.fact.slice(0, 140)}`);
+          }
+          break;
+        case 'search_web': {
+          const query = input.query;
+          if (!query) break;
+          const found = await webSearch(db, query).catch((err) => {
+            console.error('web search failed', err instanceof Error ? err.message : err);
+            return null;
+          });
+          actions.push(found ? `searched "${query}": ${formatSearchResults(found)}` : `searched "${query}": unavailable right now`);
+          break;
+        }
       }
-      default:
-        break; // stay_quiet
     }
   }
+}
+
+/** The newest message in each of these conversations. */
+async function lastMessages(db: SupabaseClient, conversationIds: string[]) {
+  const latest = new Map<string, Msg>();
+  if (!conversationIds.length) return latest;
+  const { data } = await db.from('messages').select('*').in('conversation_id', conversationIds).neq('kind', 'system').order('created_at', { ascending: false }).limit(60);
+  for (const m of (data ?? []) as Msg[]) if (!latest.has(m.conversation_id)) latest.set(m.conversation_id, m);
+  return latest;
+}
+
+function ago(iso: string) {
+  const min = Math.round((Date.now() - Date.parse(iso)) / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min}m ago`;
+  const h = Math.round(min / 60);
+  return h < 24 ? `${h}h ago` : `${Math.round(h / 24)}d ago`;
+}
+
+/** Opens (or reuses) a one-on-one or group with the named agents and posts there. Returns who it went to. */
+async function messageAgents(
+  db: SupabaseClient,
+  self: Agent,
+  convo: Conversation,
+  office: Office,
+  handles: string[] | undefined,
+  body: string | undefined,
+  hop: number,
+  postedTo: Set<string>,
+) {
+  if (!body?.trim() || !Array.isArray(handles)) return null;
+  const targets = handles
+    .map((h) => office.agents.find((a) => a.handle === String(h).replace(/^@/, '').toLowerCase()) ?? mentionedAgents(`@${h}`, office.agents)[0])
+    .filter((a): a is Agent => !!a && a.id !== self.id);
+  if (!targets.length) return null;
+  const ids = [self.id, ...targets.map((a) => a.id)];
+  const { data: existing } = await db.from('conversations').select('id').eq('office_id', convo.office_id).eq('member_key', agentKey(ids)).maybeSingle();
+  let targetId = existing?.id as string | undefined;
+  if (!targetId) {
+    if (!(await allowed(db, self.id, 'agent_new_conversation'))) return null;
+    const { data, error } = await db.rpc('open_conversation_internal', {
+      p_office: convo.office_id,
+      p_agent_ids: ids,
+      p_user_ids: [],
+      p_by_user: null,
+      p_by_agent: self.id,
+      p_title: null,
+    });
+    if (error) {
+      console.error('open conversation failed', error.message);
+      return null;
+    }
+    targetId = data as string;
+  }
+  if (postedTo.has(targetId)) return null;
+  postedTo.add(targetId);
+  await post(db, targetId, self, body, hop);
+  return targets.map((a) => a.name).join(', ');
 }

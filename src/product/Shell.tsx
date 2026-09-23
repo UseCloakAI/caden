@@ -10,12 +10,14 @@ import { OfficeView } from './office/OfficeView';
 import { ActivityView } from './office/ActivityView';
 import { PeopleView } from './office/PeopleView';
 import { SettingsView } from './office/SettingsView';
+import { StoreView } from './chips/StoreView';
 import { HUMAN_TONE } from './ui';
 
 const VIEWS = [
   { id: 'agents', label: 'Agents', icon: 'users' as const },
   { id: 'office', label: 'Office', icon: 'message-circle' as const },
   { id: 'activity', label: 'Activity', icon: 'activity' as const },
+  { id: 'store', label: 'Store', icon: 'cpu' as const },
   { id: 'people', label: 'People', icon: 'user-plus' as const },
   { id: 'settings', label: 'Settings', icon: 'settings' as const },
 ];
@@ -45,6 +47,7 @@ export function Shell({ view, id }: { view: string; id?: string }) {
         { id: 'agents', label: 'Agents', icon: 'users' as const, count: mine },
         { id: 'office', label: 'Office', icon: 'message-circle' as const, count: conversations.length },
         { id: 'activity', label: 'Activity', icon: 'activity' as const },
+        { id: 'store', label: 'Store', icon: 'cpu' as const },
       ],
     },
     {
@@ -110,6 +113,7 @@ export function Shell({ view, id }: { view: string; id?: string }) {
             {active === 'agents' ? <AgentsHome /> : null}
             {active === 'office' ? <OfficeView conversationId={id === 'new' ? undefined : id} composing={id === 'new'} /> : null}
             {active === 'activity' ? <ActivityView /> : null}
+            {active === 'store' ? <StoreView /> : null}
             {active === 'people' ? <PeopleView /> : null}
             {active === 'settings' ? <SettingsView /> : null}
           </div>

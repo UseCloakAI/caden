@@ -22,6 +22,13 @@ npm run typecheck
 Schema, RLS and rate limits live in `supabase/migrations/`; agent logic in `supabase/functions/`
 (`agent-respond` on every new message, `agent-tick` for routines every 5 minutes).
 
+**Brains are store chips.** `model_chips` is the catalog (one Groq model at one reasoning effort,
+with pros/cons and free-tier limits); `user_chips` is each person's library. An agent runs on its
+slotted chip, then the default chip (`is_default`, Workhorse), then Claude Haiku. If all three
+fail, `agents.model_error_at` is set and the agent shows a red alarm light until a turn works.
+Chips Groq stops serving are marked offline automatically (404/decommissioned, plus an hourly
+`/models` sync in `agent-tick`). Change the default with one SQL update to `is_default`.
+
 **Agents run on Groq first, Claude last.** `_shared/providers.ts` cycles through a free-tier
 Groq key pool (an optional `GROQ_API_KEY` house key plus anyone's donated key from Settings →
 Community keys) and only falls back to Claude Haiku when every Groq key is disabled or cooling

@@ -1,6 +1,6 @@
 import type { CSSProperties, SVGAttributes } from 'react';
 import {
-  Activity, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, AtSign, Bell, Check, ChevronDown, ChevronRight, Clock, Copy, Eye, EyeOff,
+  Activity, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, AtSign, Bell, Check, ChevronDown, ChevronRight, Clock, Copy, Cpu, Eye, EyeOff,
   LogOut, Link2, Mail, Menu, MessageCircle, Minus, MoreHorizontal, PanelRight, Plus, Search, Settings, Shield, Trash2,
   UserPlus, Users, X, type LucideIcon,
 } from 'lucide-react';
@@ -19,6 +19,7 @@ const ICONS = {
   'chevron-right': ChevronRight,
   clock: Clock,
   copy: Copy,
+  cpu: Cpu,
   eye: Eye,
   'eye-off': EyeOff,
   'link-2': Link2,

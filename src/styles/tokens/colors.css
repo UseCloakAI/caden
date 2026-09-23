@@ -2,6 +2,7 @@
   /* Chromatic — agent identity + full-bleed category tiles ONLY */
   --color-iris-gleam:#847dff;
   --color-cyan-signal:#00b3dd;
+  --color-alarm:#ff4d4f; /* the one warm red: a brain has failed, needs attention */
   --color-pale-iris:#d1c9ff;
   --color-deep-iris:#4b49aa;
   --color-orchid-bloom:#dd90d8;

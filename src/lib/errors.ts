@@ -13,6 +13,7 @@ const COPY: Record<string, string> = {
   bad_schedule: 'That schedule does not work. Pick a time and days.',
   invalid_provider_key: 'That key did not work. Check it and try again.',
   donate_failed: 'The key could not be saved. Try again.',
+  chip_not_in_library: 'Add that brain to your library first.',
   'Invalid login credentials': 'Email or password is wrong.',
   'Email not confirmed': 'Confirm your email first. Check your inbox.',
   'User already registered': 'An account with this email already exists.',

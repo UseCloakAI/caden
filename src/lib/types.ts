@@ -33,6 +33,10 @@ export interface Agent {
   tone: string;
   persona: string;
   status: AgentStatus;
+  chip_id: string | null;
+  model_error: string | null;
+  model_error_at: string | null;
+  last_model: string | null;
   created_at: string;
 }
 
@@ -106,4 +110,29 @@ export interface Reaction {
   user_id: string | null;
   reaction: ReactionWord;
   created_at: string;
+}
+
+/** A brain from the store: one Groq model at one reasoning effort. */
+export interface ModelChip {
+  id: string;
+  name: string;
+  model: string;
+  reasoning_effort: 'low' | 'medium' | 'high' | null;
+  maker: string;
+  tagline: string;
+  best_at: string;
+  pros: string[];
+  cons: string[];
+  smarts: number;
+  speed: number;
+  stamina: number;
+  context_tokens: number;
+  rpm: number | null;
+  rpd: number | null;
+  tpm: number | null;
+  tpd: number | null;
+  tone: string;
+  sort: number;
+  is_default: boolean;
+  live: boolean;
 }
