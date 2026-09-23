@@ -94,3 +94,16 @@ export interface AgentRun {
   output_tokens: number;
   created_at: string;
 }
+
+export const REACTIONS = ['seen', 'agree', 'on_it', 'done', 'thanks', 'disagree'] as const;
+export type ReactionWord = (typeof REACTIONS)[number];
+
+export interface Reaction {
+  id: string;
+  message_id: string;
+  office_id: string;
+  agent_id: string | null;
+  user_id: string | null;
+  reaction: ReactionWord;
+  created_at: string;
+}

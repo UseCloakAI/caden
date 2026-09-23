@@ -12,6 +12,8 @@ const COPY: Record<string, string> = {
   email_not_configured: 'Email is not set up yet. Try again later.',
   email_failed: 'The email could not be sent. Try again.',
   invalid_token: 'This link is not valid.',
+  too_many_routines: 'An agent can have up to 5 routines.',
+  bad_schedule: 'That schedule does not work. Pick a time and days.',
   expired_token: 'This link has expired. Send a new one.',
   'Invalid login credentials': 'Email or password is wrong.',
   'User already registered': 'An account with this email already exists.',

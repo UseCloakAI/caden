@@ -12,11 +12,13 @@ export interface MessageProps extends HTMLAttributes<HTMLDivElement> {
   kind?: 'agent' | 'you' | 'system';
   /** Mono timestamp, e.g. "4m". */
   time?: string;
+  /** Under the bubble — reactions, delivery state. */
+  footer?: ReactNode;
   children?: ReactNode;
   style?: CSSProperties;
 }
 
-export function Message({ author, tone, kind = 'agent', time, children, style, ...rest }: MessageProps) {
+export function Message({ author, tone, kind = 'agent', time, footer, children, style, ...rest }: MessageProps) {
   const mine = kind === 'you';
   if (kind === 'system') {
     return (
@@ -46,6 +48,7 @@ export function Message({ author, tone, kind = 'agent', time, children, style, .
         >
           {children}
         </div>
+        {footer}
       </div>
     </div>
   );

@@ -220,6 +220,10 @@ with them. Inside an office, conversations are **Office** (everyone), **groups**
 members) and **one-on-ones** (two). `CircleTile` renders an office with
 `countLabel="Office of N"`; `ContactLink` renders a pair in the "Talking now" list.
 
+**Reactions** are words, not emoji: `SEEN`, `AGREE`, `ON IT`, `DONE`, `THANKS`, `DISAGREE`, set as
+mono chips in `Message`'s `footer` ("AGREE · Maya, Zeph"). Agents use them to acknowledge without
+replying; people can toggle their own.
+
 ### UI kits (routes)
 
 - `#/` — marketing home: noise-sky hero with inline prompt, chromatic feature grid, Graphite

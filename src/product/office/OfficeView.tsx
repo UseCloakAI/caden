@@ -7,6 +7,7 @@ import { clockTime, timeAgo, useOffice, useThread, type ConversationWithPeople }
 import { navigate } from '@/lib/router';
 import { EmptyState, ErrorLine, conversationLabel } from '../ui';
 import { NewConversation } from './NewConversation';
+import { ReactionBar } from './ReactionBar';
 
 const HUMAN_TONE = 'var(--color-steel)';
 
@@ -67,7 +68,7 @@ function Thread({ convo, label }: { convo: ConversationWithPeople; label: string
   const { session } = useAuth();
   const me = session?.user.id;
   const { agentById, memberById } = useOffice();
-  const { messages, loading } = useThread(convo.id);
+  const { messages, reactions, loading, applyLocal } = useThread(convo.id);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const send = async () => {
@@ -107,6 +108,7 @@ function Thread({ convo, label }: { convo: ConversationWithPeople; label: string
               author={mine ? 'You' : agent?.name ?? human ?? 'Someone'}
               tone={agent?.tone ?? HUMAN_TONE}
               time={clockTime(m.created_at)}
+              footer={<ReactionBar messageId={m.id} reactions={reactions} me={me} onLocal={applyLocal} onError={setError} />}
             >
               {m.body}
             </Message>

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { supabase } from './supabase';
 import { useAuth } from './auth';
-import type { Agent, Conversation, Message, Office, Participant, Profile } from './types';
+import type { Agent, Conversation, Message, Office, Participant, Profile, Reaction } from './types';
 
 export interface Member {
   user_id: string;
@@ -118,31 +118,51 @@ export function useOffice() {
   return ctx;
 }
 
-/** Messages for one conversation, live. */
+/** Messages and their reactions for one conversation, live. */
 export function useThread(conversationId: string | undefined) {
   const [messages, setMessages] = useState<Message[]>([]);
+  const [reactions, setReactions] = useState<Reaction[]>([]);
   const [loading, setLoading] = useState(true);
+  const ids = useRef(new Set<string>());
 
   useEffect(() => {
     if (!conversationId) return;
     let alive = true;
     setLoading(true);
-    supabase
-      .from('messages')
-      .select('*')
-      .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: false })
-      .limit(200)
-      .then(({ data }) => {
-        if (!alive) return;
-        setMessages(((data ?? []) as Message[]).reverse());
-        setLoading(false);
-      });
+    (async () => {
+      const { data } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('conversation_id', conversationId)
+        .order('created_at', { ascending: false })
+        .limit(200);
+      if (!alive) return;
+      const loaded = ((data ?? []) as Message[]).reverse();
+      ids.current = new Set(loaded.map((m) => m.id));
+      setMessages(loaded);
+      const { data: rx } = loaded.length
+        ? await supabase.from('message_reactions').select('*').in('message_id', [...ids.current])
+        : { data: [] };
+      if (!alive) return;
+      setReactions((rx ?? []) as Reaction[]);
+      setLoading(false);
+    })();
+
     const channel = supabase
       .channel(`thread:${conversationId}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${conversationId}` }, (payload) => {
         const msg = payload.new as Message;
+        ids.current.add(msg.id);
         setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
+      })
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_reactions' }, (payload) => {
+        const r = payload.new as Reaction;
+        if (!ids.current.has(r.message_id)) return;
+        setReactions((prev) => (prev.some((x) => x.id === r.id) ? prev : [...prev, r]));
+      })
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'message_reactions' }, (payload) => {
+        const gone = (payload.old as { id?: string }).id;
+        if (gone) setReactions((prev) => prev.filter((x) => x.id !== gone));
       })
       .subscribe();
     return () => {
@@ -151,7 +171,14 @@ export function useThread(conversationId: string | undefined) {
     };
   }, [conversationId]);
 
-  return { messages, loading };
+  /** Optimistic local update for your own reaction toggles. */
+  const applyLocal = (change: { add?: Reaction; removeId?: string }) =>
+    setReactions((prev) => {
+      const next = change.removeId ? prev.filter((x) => x.id !== change.removeId) : prev;
+      return change.add && !next.some((x) => x.id === change.add!.id) ? [...next, change.add] : next;
+    });
+
+  return { messages, reactions, loading, applyLocal };
 }
 
 /** "4m", "3h", "Yesterday", "Sep 12" — the mono timestamp voice. */
