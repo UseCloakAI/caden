@@ -5,6 +5,7 @@ import { errorCopy } from '@/lib/errors';
 import { useAuth } from '@/lib/auth';
 import { clockTime, timeAgo, useOffice, useThread, type ConversationWithPeople } from '@/lib/office';
 import { navigate } from '@/lib/router';
+import { useNarrow } from '@/lib/useNarrow';
 import { EmptyState, ErrorLine, conversationLabel } from '../ui';
 import { NewConversation } from './NewConversation';
 import { ReactionBar } from './ReactionBar';
@@ -20,6 +21,7 @@ export function OfficeView({ conversationId, composing }: { conversationId?: str
   const current = conversations.find((c) => c.id === conversationId) ?? officeThread;
   const label = (c: ConversationWithPeople) => conversationLabel(c, me, agentById, memberById, office.office?.name);
 
+  const narrow = useNarrow();
   const groups = conversations.filter((c) => c.kind === 'group');
   const directs = conversations.filter((c) => c.kind === 'direct');
 
@@ -37,6 +39,24 @@ export function OfficeView({ conversationId, composing }: { conversationId?: str
       />
     );
   };
+
+  if (narrow) {
+    // One column: conversations as a scrolling pill row above the thread; members hidden.
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-16)', minHeight: '70vh' }}>
+        <div style={{ display: 'flex', gap: 'var(--spacing-8)', overflowX: 'auto', paddingBottom: 'var(--spacing-4)' }}>
+          <Button variant="pill" icon="plus" href="#/app/office/new">New</Button>
+          {conversations.map((c) => (
+            <Button key={c.id} variant="pill" onClick={() => navigate(`/app/office/${c.id}`)} style={current?.id === c.id ? { background: 'var(--color-pure)', color: 'var(--color-void)' } : undefined}>
+              {label(c)}
+            </Button>
+          ))}
+        </div>
+        {current ? <Thread key={current.id} convo={current} label={label(current)} /> : <EmptyState fact="No conversations yet." />}
+        {composing ? <NewConversation onClose={() => navigate(current ? `/app/office/${current.id}` : '/app/office')} /> : null}
+      </div>
+    );
+  }
 
   return (
     <div style={{ display: 'grid', gridTemplateColumns: '260px minmax(0,1fr) 240px', gap: 'var(--spacing-24)', height: '100%', minHeight: 0 }}>
