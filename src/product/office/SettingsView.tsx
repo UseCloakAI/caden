@@ -1,17 +1,35 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { AnimatedNumber, Button, Dialog, MonoLabel, TextField, useToast } from '@/ds';
-import { supabase, callFunction } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import { errorCopy } from '@/lib/errors';
 import { useAuth } from '@/lib/auth';
 import { useOffice } from '@/lib/office';
 import { navigate } from '@/lib/router';
 import { ErrorLine, PageHeader, Section, TonePicker } from '../ui';
+import { KeyPool } from './KeyPool';
 
-const DAILY_TOKENS = 200_000;
+interface Usage {
+  groq: number;
+  claude: number;
+}
 
-interface KeyStats {
-  healthy: number;
-  cooling_down: number;
+/** Groq and Claude now keep separate daily budgets, each with its own cap — see usage_context(). */
+function UsageBar({ label, used, cap }: { label: string; used: number | null; cap: number | null }) {
+  const share = used == null || !cap ? 0 : Math.min(1, used / cap);
+  return (
+    <div className="p-usage">
+      <div className="p-usage__label">
+        <MonoLabel size="tiny" tone="var(--text-body)">{label}</MonoLabel>
+        <span className="p-usage__value">
+          {used == null ? '—' : <AnimatedNumber value={used} />}
+          <MonoLabel size="tiny" tone="var(--text-muted)">{cap ? ` / ${cap.toLocaleString()}` : ''}</MonoLabel>
+        </span>
+      </div>
+      <span className="p-meter-bar" role="meter" aria-valuemin={0} aria-valuemax={cap ?? 0} aria-valuenow={used ?? 0} aria-label={`${label} tokens used today`}>
+        <span style={{ transform: `scaleX(${share})` }} />
+      </span>
+    </div>
+  );
 }
 
 export function SettingsView() {
@@ -22,46 +40,31 @@ export function SettingsView() {
   const [officeName, setOfficeName] = useState(office?.name ?? '');
   const [officeNote, setOfficeNote] = useState(office?.note ?? '');
   const [officeTone, setOfficeTone] = useState(office?.tone ?? 'var(--color-horizon)');
-  const [usage, setUsage] = useState<number | null>(null);
+  const [usage, setUsage] = useState<Usage | null>(null);
+  const [caps, setCaps] = useState<{ groq: number | null; claude: number | null }>({ groq: null, claude: null });
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState<'profile' | 'office' | null>(null);
   const [leaving, setLeaving] = useState(false);
-  const [keyStats, setKeyStats] = useState<KeyStats | null>(null);
-  const [donateKey, setDonateKey] = useState('');
-  const [donateBusy, setDonateBusy] = useState(false);
-  const [donateStatus, setDonateStatus] = useState<string | null>(null);
-
-  const loadKeyStats = () => {
-    supabase.rpc('provider_key_stats').maybeSingle().then(({ data }) => setKeyStats(data as KeyStats | null));
-  };
 
   useEffect(() => {
-    loadKeyStats();
-  }, []);
-
-  const donate = async (e: FormEvent) => {
-    e.preventDefault();
-    setDonateBusy(true);
-    setDonateStatus(null);
-    const res = await callFunction('donate-key', { api_key: donateKey.trim() });
-    setDonateBusy(false);
-    if (res.error) setDonateStatus(errorCopy(res.error));
-    else {
-      setDonateKey('');
-      setDonateStatus('Added. Thanks — it now helps power replies for the whole platform.');
-      toast('Key donated. Thanks for helping power the pool.');
-      loadKeyStats();
-    }
-  };
-
-  useEffect(() => {
-    const since = new Date(Date.now() - 86400_000).toISOString();
+    if (!profile?.id) return;
     supabase
-      .from('agent_runs')
-      .select('input_tokens, output_tokens, owner_id')
-      .eq('owner_id', profile?.id ?? '')
-      .gte('created_at', since)
-      .then(({ data }) => setUsage((data ?? []).reduce((n, r) => n + r.input_tokens + r.output_tokens, 0)));
+      .rpc('usage_context')
+      .maybeSingle()
+      .then(({ data: ctx }) => {
+        setCaps({ groq: (ctx as { groq_max?: number } | null)?.groq_max ?? null, claude: (ctx as { claude_max?: number } | null)?.claude_max ?? null });
+        const resetAt = (ctx as { reset_at?: string } | null)?.reset_at;
+        const since = new Date(Math.max(resetAt ? Date.parse(resetAt) : 0, Date.now() - 86400_000)).toISOString();
+        return supabase.from('agent_runs').select('input_tokens, output_tokens, provider').eq('owner_id', profile.id).gte('created_at', since);
+      })
+      .then(({ data }) => {
+        const sums: Usage = { groq: 0, claude: 0 };
+        for (const r of (data ?? []) as { input_tokens: number; output_tokens: number; provider: string | null }[]) {
+          const key = r.provider === 'groq' ? 'groq' : 'claude'; // runs from before the provider column existed were all Claude.
+          sums[key] += r.input_tokens + r.output_tokens;
+        }
+        setUsage(sums);
+      });
   }, [profile?.id]);
 
   const saveProfile = async (e: FormEvent) => {
@@ -98,7 +101,6 @@ export function SettingsView() {
 
   const profileDirty = name.trim() !== (profile?.display_name ?? '');
   const officeDirty = officeName.trim() !== (office?.name ?? '') || (officeNote.trim() || null) !== (office?.note ?? null) || officeTone !== office?.tone;
-  const share = usage == null ? 0 : Math.min(1, usage / DAILY_TOKENS);
 
   return (
     <div className="p-stack p-narrow-page">
@@ -127,31 +129,30 @@ export function SettingsView() {
         </Section>
       ) : null}
 
-      <Section title="Usage · last 24 hours" description="Tokens your agents used across every conversation and routine.">
-        <div className="p-usage">
-          <span className="p-usage__value">
-            {usage == null ? '—' : <AnimatedNumber value={usage} />}
-            <MonoLabel size="tiny" tone="var(--text-muted)">{` / ${DAILY_TOKENS.toLocaleString()} tokens`}</MonoLabel>
-          </span>
-          <span className="p-meter-bar" role="meter" aria-valuemin={0} aria-valuemax={DAILY_TOKENS} aria-valuenow={usage ?? 0} aria-label="Tokens used today">
-            <span style={{ transform: `scaleX(${share})` }} />
-          </span>
+      <Section title="Usage · last 24 hours" description="Tokens your agents used, by provider. Groq runs first and is free, so its budget is generous — mainly there to catch a runaway loop. Claude only picks up a turn when every Groq key is resting, and keeps a smaller budget since it costs real money.">
+        <div className="p-usage-group">
+          <UsageBar label="Groq" used={usage?.groq ?? null} cap={caps.groq} />
+          <UsageBar label="Claude" used={usage?.claude ?? null} cap={caps.claude} />
         </div>
       </Section>
 
-      <Section
+      <KeyPool
+        provider="groq"
         title="Community keys"
         description="Agents reply using a shared, free-tier Groq key pool before falling back to Claude. Donate your own free Groq key (from console.groq.com) and it joins the pool for everyone — used to power other people's agents too, never shown again once saved."
-      >
-        <MonoLabel size="tiny" tone="var(--text-muted)">
-          {keyStats ? `${keyStats.healthy} keys ready · ${keyStats.cooling_down} resting` : 'Checking pool…'}
-        </MonoLabel>
-        <form onSubmit={donate} className="p-form" style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          <TextField label="Groq API key" type="password" value={donateKey} onChange={setDonateKey} placeholder="gsk_…" required style={{ flex: 1, minWidth: 220 }} />
-          <Button variant="ghost" type="submit" loading={donateBusy} disabled={!donateKey.trim()}>Donate key</Button>
-        </form>
-        <ErrorLine>{donateStatus}</ErrorLine>
-      </Section>
+        fieldLabel="Groq API key"
+        placeholder="gsk_…"
+        thanks="Added. Thanks — it now helps power replies for the whole platform."
+      />
+
+      <KeyPool
+        provider="tavily"
+        title="Search keys"
+        description="Agents can look things up with a shared, free-tier Tavily pool — current prices, hours, news, anything outside what they already know. Donate your own free Tavily key (from tavily.com, no card needed) and it joins the pool for everyone. If the pool ever runs dry, agents just answer from what they know."
+        fieldLabel="Tavily API key"
+        placeholder="tvly-…"
+        thanks="Added. Thanks — agents can now search a little further before it runs dry."
+      />
 
       <Section title="Leave or sign out" description={`Leaving ${office?.name ?? 'the office'} takes your agents with you. You can join another office afterwards.`}>
         <div style={{ display: 'flex', gap: 'var(--spacing-12)', flexWrap: 'wrap' }}>

@@ -211,7 +211,9 @@
 .p-person__name{display:flex;align-items:baseline;gap:var(--spacing-8);font-family:var(--font-sans);font-size:var(--text-body-md);color:var(--color-cloud)}
 .p-office-preview{display:flex;flex-direction:column;justify-content:flex-end;gap:var(--spacing-8);min-height:120px;padding:var(--spacing-20);border-radius:var(--radius-xl);color:var(--color-pure);transition:background-color var(--duration-enter) var(--ease-out)}
 .p-office-preview__name{font-family:var(--font-display);font-weight:300;font-size:32px;line-height:1}
+.p-usage-group{display:flex;flex-direction:column;gap:var(--spacing-20)}
 .p-usage{display:flex;flex-direction:column;gap:var(--spacing-12)}
+.p-usage__label{display:flex;align-items:baseline;justify-content:space-between;gap:var(--spacing-12)}
 .p-usage__value{display:flex;align-items:baseline;gap:var(--spacing-8);font-family:var(--font-mono);font-size:var(--text-subheading);color:var(--color-cloud)}
 .p-meter-bar{display:block;height:4px;border-radius:2px;background:rgba(255,255,255,0.08);overflow:hidden}
 .p-meter-bar span{display:block;height:100%;background:var(--data-signal);transform-origin:left;transition:transform 1.4s var(--ease-out)}

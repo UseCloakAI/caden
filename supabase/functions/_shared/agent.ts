@@ -3,6 +3,7 @@
 import type Anthropic from 'npm:@anthropic-ai/sdk@0';
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
 import { AllBrainsFailed, chatCompletion, type ChatResult } from './providers.ts';
+import { webSearch, type SearchResult } from './search.ts';
 
 const MAX_BODY = 4000;
 const HISTORY_WINDOW = 12;
@@ -303,11 +304,22 @@ const ACTION_TOOLS: Anthropic.Tool[] = [
     input_schema: { type: 'object', properties: { fact: { type: 'string', description: 'One short, self-contained sentence.' } }, required: ['fact'], additionalProperties: false },
   },
   {
+    name: 'search_web',
+    description:
+      'Search the web for something outside what you already know — a current price, hours, news, a fact your training would not have. The results come back before your next step, so you can search again with a refined query if the first pass was not enough, then reply or post once you actually have the answer.',
+    input_schema: { type: 'object', properties: { query: { type: 'string', description: 'A short, specific search query.' } }, required: ['query'], additionalProperties: false },
+  },
+  {
     name: 'done',
     description: 'Finish this turn. Your reaction and anything you already sent stay visible.',
     input_schema: { type: 'object', properties: { reason: { type: 'string' } }, required: ['reason'], additionalProperties: false },
   },
 ];
+
+function formatSearchResults(found: SearchResult): string {
+  const lines = found.results.map((r, i) => `${i + 1}. ${r.title} — ${r.snippet} (${r.url})`);
+  return [found.answer ? `Summary: ${found.answer}` : null, ...lines].filter(Boolean).join('\n') || 'No results found.';
+}
 
 /** Model calls per turn: the first does react + act together; at most two follow-ups. */
 const MAX_STEPS = 3;
@@ -337,14 +349,31 @@ async function allowed(db: SupabaseClient, subject: string, action: string) {
   return false;
 }
 
-async function tokensLeft(db: SupabaseClient, ownerId: string) {
-  const since = new Date(Date.now() - 86400_000).toISOString();
-  const [{ data: runs }, { data: limit }] = await Promise.all([
-    db.from('agent_runs').select('input_tokens, output_tokens').eq('owner_id', ownerId).gte('created_at', since),
-    db.from('limits').select('max').eq('action', 'claude_tokens').maybeSingle(),
+/**
+ * Groq and Claude keep separate daily budgets (Groq's is a generous runaway-loop breaker,
+ * Claude's is the real cost control) — see the 20260924100000 migration. Usage before the
+ * shared reset point never counts, which is how "reset the limits" works without touching
+ * agent_runs itself. Routing between the two is decided by chatCompletion on key-pool/chip
+ * health, not by this: a turn is only blocked once *both* are spent, so a Claude-only agent
+ * going over its cap doesn't also stop the office's Groq agents, and vice versa.
+ */
+async function tokenBudget(db: SupabaseClient, ownerId: string): Promise<{ groq: number; claude: number }> {
+  const [{ data: ctx }, { data: runs }] = await Promise.all([
+    db.rpc('usage_context').maybeSingle(),
+    db.from('agent_runs').select('input_tokens, output_tokens, provider, created_at').eq('owner_id', ownerId).gte('created_at', new Date(Date.now() - 86400_000).toISOString()),
   ]);
-  const used = (runs ?? []).reduce((n, r) => n + r.input_tokens + r.output_tokens, 0);
-  return (limit?.max ?? 200000) - used;
+  const resetAt = ctx?.reset_at ? Date.parse(ctx.reset_at) : 0;
+  const since = Math.max(resetAt, Date.now() - 86400_000);
+  const used = { groq: 0, claude: 0 };
+  for (const r of (runs ?? []) as { input_tokens: number; output_tokens: number; provider: string | null; created_at: string }[]) {
+    if (Date.parse(r.created_at) < since) continue;
+    const key = r.provider === 'groq' ? 'groq' : 'claude';
+    used[key] += r.input_tokens + r.output_tokens;
+  }
+  return {
+    groq: (ctx?.groq_max ?? 2_000_000) - used.groq,
+    claude: (ctx?.claude_max ?? 200_000) - used.claude,
+  };
 }
 
 /** member_key format from open_conversation_internal: sorted agent ids, "a:<id>" joined by commas. */
@@ -381,7 +410,8 @@ export async function runTurn(db: SupabaseClient, self: Agent, convo: Conversati
     if (!quietFailures) await systemNote(db, convo.id, convo.office_id, `${self.name} is taking a break. Too many messages in a short time.`);
     return;
   }
-  if ((await tokensLeft(db, self.owner_id)) <= 0) {
+  const budget = await tokenBudget(db, self.owner_id);
+  if (budget.groq <= 0 && budget.claude <= 0) {
     if (!quietFailures) await systemNote(db, convo.id, convo.office_id, `${self.name} is out of budget for today.`);
     return;
   }
@@ -453,6 +483,7 @@ ${task}`;
   let reacted = !incoming;
   let delegated = false;
   let onlyReacted = false; // the model gave just the reaction and hasn't said whether more follows
+  let pendingSearch = false; // last step called search_web; results are in doneSoFar, give it a beat to act on them
 
   const say = async (conversationId: string, body: string | undefined) => {
     if (!body?.trim() || postedTo.has(conversationId)) return false;
@@ -469,6 +500,9 @@ ${task}`;
       tools = incoming ? [REACT_TOOL, ...ACTION_TOOLS] : ACTION_TOOLS;
       instruction = incoming ? FIRST_STEP : 'Act on the routine: post, message agents, remember — then call done.';
       if (mustReply) instruction += '\nThis is a one-on-one: include a reply.';
+    } else if (pendingSearch) {
+      tools = ACTION_TOOLS;
+      instruction = 'You have search results above (see what you have done so far). Reply, post, message someone, or search again if that was not enough — or call done.';
     } else if (onlyReacted && !(mustReply && !repliedHere)) {
       tools = ACTION_TOOLS;
       instruction = 'Your reaction is posted. Anything else — a reply, a message, a post — or call done if the reaction said enough.';
@@ -510,8 +544,9 @@ ${task}`;
     }
 
     onlyReacted = step === 0 && !!incoming && result.toolUses.every((t) => t.name === 'react');
+    pendingSearch = result.toolUses.some((t) => t.name === 'search_web');
     for (const toolUse of result.toolUses) {
-      const input = toolUse.input as { body?: string; handles?: string[]; fact?: string; conversation?: number };
+      const input = toolUse.input as { body?: string; handles?: string[]; fact?: string; conversation?: number; query?: string };
       switch (toolUse.name) {
         case 'reply':
           if (await say(convo.id, input.body)) actions.push(`replied here: "${input.body!.slice(0, 140)}"`);
@@ -543,6 +578,16 @@ ${task}`;
             actions.push(`remembered: ${input.fact.slice(0, 140)}`);
           }
           break;
+        case 'search_web': {
+          const query = input.query;
+          if (!query) break;
+          const found = await webSearch(db, query).catch((err) => {
+            console.error('web search failed', err instanceof Error ? err.message : err);
+            return null;
+          });
+          actions.push(found ? `searched "${query}": ${formatSearchResults(found)}` : `searched "${query}": unavailable right now`);
+          break;
+        }
       }
     }
   }
