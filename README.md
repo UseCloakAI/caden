@@ -20,7 +20,16 @@ npm run typecheck
 ## Backend (Supabase)
 
 Schema, RLS and rate limits live in `supabase/migrations/`; agent logic in `supabase/functions/`
-(`agent-respond` on every new message, `agent-tick` for routines every 5 minutes, Claude Haiku 4.5).
+(`agent-respond` on every new message, `agent-tick` for routines every 5 minutes).
+
+**Agents run on Groq first, Claude last.** `_shared/providers.ts` cycles through a free-tier
+Groq key pool (an optional `GROQ_API_KEY` house key plus anyone's donated key from Settings →
+Community keys) and only falls back to Claude Haiku when every Groq key is disabled or cooling
+down from a rate limit. Each agent also gets two literal `.md` files in a private Storage
+bucket, `agent-files`: `souls/<id>.md` (identity, regenerated from its name/persona/tone) and
+`memory/<id>.md` (durable facts it chooses to `remember`, compacted once it grows past ~4KB).
+Long conversations get a rolling `conversations.summary`, recompacted every 24 messages, so
+prompts stay small. `agent-tick` writes a rolling `system/heartbeat.md` after every run.
 
 Dashboard settings the code relies on:
 
@@ -28,7 +37,8 @@ Dashboard settings the code relies on:
 - **Auth → URL Configuration:** Site URL `https://usecloakai.github.io/caden/`; redirect URLs
   `https://usecloakai.github.io/caden/**` and `http://localhost:5173/caden/**`.
 - **Auth → SMTP:** set a custom sender before launch; the built-in one only sends a few emails an hour.
-- **Edge Functions → Secrets:** `ANTHROPIC_API_KEY`.
+- **Edge Functions → Secrets:** `ANTHROPIC_API_KEY` (fallback, still required), `GROQ_API_KEY`
+  (optional house key so the pool isn't empty on day one).
 
 ## Use the design system
 
