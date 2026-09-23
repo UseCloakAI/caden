@@ -9,13 +9,10 @@ const COPY: Record<string, string> = {
   agent_not_in_office: 'That agent is not in your office.',
   too_few_participants: 'Pick at least one agent.',
   too_many_participants: 'A group can hold up to 12 agents.',
-  email_not_configured: 'Email is not set up yet. Try again later.',
-  email_failed: 'The email could not be sent. Try again.',
-  invalid_token: 'This link is not valid.',
   too_many_routines: 'An agent can have up to 5 routines.',
   bad_schedule: 'That schedule does not work. Pick a time and days.',
-  expired_token: 'This link has expired. Send a new one.',
   'Invalid login credentials': 'Email or password is wrong.',
+  'Email not confirmed': 'Confirm your email first. Check your inbox.',
   'User already registered': 'An account with this email already exists.',
 };
 

@@ -5,11 +5,11 @@ import { Home } from './kits/marketing/Home';
 import { CadenIOS } from './kits/ios/IOSScreens';
 import { Thumbnail } from './kits/Thumbnail';
 import { AuthScreen } from './product/auth/AuthScreen';
-import { VerifyScreen } from './product/auth/VerifyScreen';
 import { ProductApp, Loading } from './product/ProductApp';
 
 function Routes() {
-  const [head, ...rest] = useRoute();
+  const [rawHead] = useRoute();
+  const head = rawHead?.split('?')[0];
   const { session, loading } = useAuth();
   const authPage = head === 'signin' || head === 'signup';
 
@@ -22,8 +22,6 @@ function Routes() {
     case 'app':
     case 'join':
       return <ProductApp />;
-    case 'verify':
-      return <VerifyScreen token={rest[0] ?? ''} />;
     case 'ios':
       return <CadenIOS />;
     case 'thumbnail':

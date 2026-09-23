@@ -3,8 +3,6 @@ import type { Session } from '@supabase/supabase-js';
 import { supabase } from './supabase';
 import type { Profile } from './types';
 
-export const GRACE_MS = 60 * 60 * 1000;
-
 interface AuthState {
   session: Session | null;
   profile: Profile | null;
@@ -30,7 +28,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const returning = params.has('code') || params.has('error') || params.has('error_description');
     supabase.auth.getSession().then(async ({ data }) => {
+      // Back from a confirmation email: supabase-js has exchanged ?code= by now. Tidy the URL
+      // and route on; a link opened in another browser can't be exchanged, so ask to sign in.
+      if (returning) {
+        window.history.replaceState(null, '', `${window.location.pathname}#/${data.session ? 'app' : 'signin?confirmed=1'}`);
+        window.dispatchEvent(new HashChangeEvent('hashchange'));
+      }
       setSession(data.session);
       await loadProfile(data.session?.user.id);
       setLoading(false);
@@ -59,16 +65,4 @@ export function useAuth() {
   const ctx = useContext(AuthContext);
   if (!ctx) throw new Error('useAuth outside AuthProvider');
   return ctx;
-}
-
-/** Milliseconds left in the verification grace window; null once verified. Ticks every 30s. */
-export function useVerifyWindow() {
-  const { profile } = useAuth();
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(id);
-  }, []);
-  if (!profile || profile.email_verified_at) return null;
-  return Math.max(0, new Date(profile.created_at).getTime() + GRACE_MS - now);
 }

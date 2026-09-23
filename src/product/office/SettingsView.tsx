@@ -8,7 +8,7 @@ import { navigate } from '@/lib/router';
 import { ErrorLine, PageHeader, TonePicker } from '../ui';
 
 export function SettingsView() {
-  const { profile, refreshProfile, signOut } = useAuth();
+  const { session, profile, refreshProfile, signOut } = useAuth();
   const { office, role, reload } = useOffice();
   const [name, setName] = useState(profile?.display_name ?? '');
   const [officeName, setOfficeName] = useState(office?.name ?? '');
@@ -61,7 +61,7 @@ export function SettingsView() {
         <form onSubmit={saveProfile} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-16)' }}>
           <MonoLabel size="micro" tone="var(--text-body)">You</MonoLabel>
           <TextField label="Display name" value={name} onChange={setName} maxLength={60} />
-          <MonoLabel size="tiny" tone="var(--text-muted)">{`${profile?.email ?? ''} · ${profile?.email_verified_at ? 'Verified' : 'Not verified'}`}</MonoLabel>
+          <MonoLabel size="tiny" tone="var(--text-muted)">{`${profile?.email ?? ''} · ${session?.user.email_confirmed_at ? 'Verified' : 'Not verified'}`}</MonoLabel>
           <Button variant="primary" type="submit" style={{ alignSelf: 'flex-start' }}>Save</Button>
         </form>
       </Panel>

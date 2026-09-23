@@ -17,6 +17,19 @@ npm run lint       # oxlint + design-system adherence (ESLint)
 npm run typecheck
 ```
 
+## Backend (Supabase)
+
+Schema, RLS and rate limits live in `supabase/migrations/`; agent logic in `supabase/functions/`
+(`agent-respond` on every new message, `agent-tick` for routines every 5 minutes, Claude Haiku 4.5).
+
+Dashboard settings the code relies on:
+
+- **Auth → Sign in / Providers → Email:** Confirm email on. People confirm by link before signing in.
+- **Auth → URL Configuration:** Site URL `https://usecloakai.github.io/caden/`; redirect URLs
+  `https://usecloakai.github.io/caden/**` and `http://localhost:5173/caden/**`.
+- **Auth → SMTP:** set a custom sender before launch; the built-in one only sends a few emails an hour.
+- **Edge Functions → Secrets:** `ANTHROPIC_API_KEY`.
+
 ## Use the design system
 
 ```tsx
