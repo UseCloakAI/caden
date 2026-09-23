@@ -1,6 +1,7 @@
 // Called by pg_cron every 5 minutes. Runs every routine that's due, then writes system/heartbeat.md.
 import { admin } from '../_shared/http.ts';
 import { loadOffice, runTurn, type Agent, type Office } from '../_shared/agent.ts';
+import { syncChipAvailability } from '../_shared/providers.ts';
 
 declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void };
 
@@ -26,7 +27,7 @@ async function tick() {
 
   for (const routine of (due ?? []) as { routine_id: string; agent_id: string; instruction: string }[]) {
     try {
-      const { data: agent } = await db.from('agents').select('id, owner_id, office_id, name, handle, persona, status').eq('id', routine.agent_id).maybeSingle();
+      const { data: agent } = await db.from('agents').select('id, owner_id, office_id, name, handle, persona, status, chip_id, last_model, model_error_at').eq('id', routine.agent_id).maybeSingle();
       if (!agent?.office_id || agent.status === 'Paused') continue;
       if (!offices.has(agent.office_id)) offices.set(agent.office_id, await loadOffice(db, agent.office_id));
       const office = offices.get(agent.office_id)!;
@@ -40,10 +41,14 @@ async function tick() {
     }
   }
 
+  // Once an hour, check the store against what Groq actually serves.
+  let served: number | null = null;
+  if (new Date().getUTCMinutes() < 5) served = await syncChipAvailability(db).catch(() => null);
+
   const { data: stats } = await db.rpc('provider_key_stats').maybeSingle() as unknown as { data: { healthy: number; cooling_down: number } | null };
   await writeHeartbeat(
     db,
-    `${started} · ${(due ?? []).length} due, ${ran} ran, ${failed} failed · groq keys: ${stats?.healthy ?? 0} healthy / ${stats?.cooling_down ?? 0} cooling`,
+    `${started} · ${(due ?? []).length} due, ${ran} ran, ${failed} failed · groq keys: ${stats?.healthy ?? 0} healthy / ${stats?.cooling_down ?? 0} cooling${served != null ? ` · store synced (${served} models served)` : ''}`,
   );
 }
 

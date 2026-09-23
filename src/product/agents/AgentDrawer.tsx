@@ -6,7 +6,8 @@ import { useAuth } from '@/lib/auth';
 import { AGENT_TONES, useOffice } from '@/lib/office';
 import { navigate } from '@/lib/router';
 import type { Agent } from '@/lib/types';
-import { ErrorLine, TonePicker, handleFromName } from '../ui';
+import { ErrorLine, Section, TonePicker, handleFromName } from '../ui';
+import { BrainSlot } from '../chips/BrainSlot';
 import { RoutinesPanel } from './RoutinesPanel';
 
 export function AgentDrawer({ agentId, onClose }: { agentId: string | 'new'; onClose: () => void }) {
@@ -52,6 +53,9 @@ function AgentProfile({ agent, owner, onClose }: { agent: Agent; owner?: string;
     <Drawer onClose={onClose} eyebrow={`${owner ? `${owner}'s` : 'Office'} agent`} label={agent.name}>
       <Identity name={agent.name} tone={agent.tone} handle={`@${agent.handle}`} meta={agent.status} active={agent.status === 'Active'} />
       <p className="p-lede">{agent.persona || 'No description yet.'}</p>
+      <Section title="Brain">
+        <BrainSlot chipId={agent.chip_id} agent={agent} readOnly />
+      </Section>
       <ErrorLine>{error}</ErrorLine>
       <Button
         variant="primary"
@@ -82,6 +86,7 @@ function AgentForm({ agent, nextTone, onClose, onSaved }: { agent?: Agent; nextT
   const [tone, setTone] = useState(agent?.tone ?? nextTone);
   const [persona, setPersona] = useState(agent?.persona ?? '');
   const [paused, setPaused] = useState(agent?.status === 'Paused');
+  const [chipId, setChipId] = useState<string | null>(agent?.chip_id ?? null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -96,7 +101,7 @@ function AgentForm({ agent, nextTone, onClose, onSaved }: { agent?: Agent; nextT
     const fields = { name: name.trim(), tone, persona: persona.trim(), status: paused ? 'Paused' : 'Active' };
     const { data, error: err } = agent
       ? await supabase.from('agents').update(fields).eq('id', agent.id).select('id').single()
-      : await supabase.from('agents').insert({ ...fields, handle: shownHandle.replace(/^@/, ''), owner_id: session!.user.id }).select('id').single();
+      : await supabase.from('agents').insert({ ...fields, chip_id: chipId, handle: shownHandle.replace(/^@/, ''), owner_id: session!.user.id }).select('id').single();
     setBusy(false);
     if (err) {
       setError(errorCopy(err));
@@ -105,6 +110,22 @@ function AgentForm({ agent, nextTone, onClose, onSaved }: { agent?: Agent; nextT
     await onSaved();
     toast(agent ? `${fields.name} saved.` : `${fields.name} joined the office.`);
     if (!agent && data) navigate(`/app/agents/${data.id}`);
+  };
+
+  // Existing agents swap brains on drop; a new agent keeps the pick until it's created.
+  const slotChip = async (id: string | null) => {
+    if (!agent) {
+      setChipId(id);
+      return;
+    }
+    const { error: err } = await supabase.from('agents').update({ chip_id: id }).eq('id', agent.id);
+    if (err) {
+      setError(errorCopy(err));
+      return;
+    }
+    setChipId(id);
+    await onSaved();
+    toast(id ? `${agent.name} got a new brain.` : `${agent.name} is back on the default brain.`, { icon: 'cpu' });
   };
 
   const remove = async () => {
@@ -187,6 +208,9 @@ function AgentForm({ agent, nextTone, onClose, onSaved }: { agent?: Agent; nextT
           </Button>
         </div>
       </form>
+      <Section title="Brain" description="Which model this agent thinks with. If it's busy or fails, the default brain takes over, then Claude.">
+        <BrainSlot chipId={chipId} onSlot={slotChip} agent={agent} />
+      </Section>
       {agent ? <RoutinesPanel agent={agent} /> : null}
       {confirmDelete && agent ? (
         <Dialog onClose={() => setConfirmDelete(false)} title={`Delete ${agent.name}?`} confirmLabel="Delete agent" onConfirm={remove}>

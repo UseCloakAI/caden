@@ -30,6 +30,7 @@ export function AgentsHome() {
       tone={a.tone}
       role={a.persona || 'No brief yet.'}
       status={a.status}
+      alarm={a.model_error_at ? `${a.name}'s brain failed. Open the agent to see why.` : undefined}
       belongsTo={a.owner_id === me ? 'Yours' : `${memberById(a.owner_id)?.profile?.display_name ?? 'Someone'}'s`}
       onClick={() => navigate(`/app/agents/${a.id}`)}
       style={{ '--i': i } as StyleVars}

@@ -57,6 +57,8 @@ em .c-word>span,.c-word em{padding-right:0.04em}
 /* ——— Live dot ————————————————————————————————————————————————————————— */
 .c-dot{position:relative;display:inline-block;width:6px;height:6px;border-radius:var(--radius-pill);flex:none;background:var(--dot,var(--color-fog))}
 .c-dot[data-live]::after{content:"";position:absolute;inset:0;border-radius:inherit;background:inherit;animation:cadenPing 2.2s var(--ease-out) infinite}
+.c-alarm{position:relative;display:inline-block;width:8px;height:8px;border-radius:var(--radius-pill);flex:none;background:var(--color-alarm);box-shadow:0 0 8px var(--color-alarm)}
+.c-alarm::after{content:"";position:absolute;inset:0;border-radius:inherit;background:inherit;animation:cadenPing 1.4s var(--ease-out) infinite}
 
 /* ——— Avatar ——————————————————————————————————————————————————————————— */
 .c-avatar{position:relative;flex:none}

@@ -17,11 +17,13 @@ export interface AgentCardProps extends HTMLAttributes<HTMLDivElement> {
   /** Owner or circle, rendered as a mono suffix, e.g. "Maya's". */
   belongsTo?: string;
   selected?: boolean;
+  /** Red alarm light: the agent's brain failed and it needs attention. Replaces the status dot. */
+  alarm?: string;
   onClick?: MouseEventHandler<HTMLDivElement>;
   style?: CSSProperties;
 }
 
-export function AgentCard({ name, handle, tone, role, status = 'Active', belongsTo, selected = false, onClick, className, style, ...rest }: AgentCardProps) {
+export function AgentCard({ name, handle, tone, role, status = 'Active', belongsTo, selected = false, alarm, onClick, className, style, ...rest }: AgentCardProps) {
   const live = status === 'Active';
   return (
     <div
@@ -55,8 +57,12 @@ export function AgentCard({ name, handle, tone, role, status = 'Active', belongs
         <p style={{ margin: 0, fontFamily: 'var(--font-sans)', fontSize: 'var(--text-body-sm)', lineHeight: 'var(--leading-body-sm)', color: 'var(--text-body)', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{role}</p>
       ) : null}
       <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-8)', marginTop: 'auto' }}>
-        <span className="c-dot" data-live={live || undefined} style={{ '--dot': live ? tone ?? 'var(--color-pure)' : 'var(--color-fog)' } as StyleVars} />
-        <MonoLabel size="tiny" tone="var(--text-body)">{status}</MonoLabel>
+        {alarm ? (
+          <span className="c-alarm" role="img" aria-label={alarm} title={alarm} />
+        ) : (
+          <span className="c-dot" data-live={live || undefined} style={{ '--dot': live ? tone ?? 'var(--color-pure)' : 'var(--color-fog)' } as StyleVars} />
+        )}
+        <MonoLabel size="tiny" tone={alarm ? 'var(--color-alarm)' : 'var(--text-body)'}>{alarm ? 'Brain error' : status}</MonoLabel>
         {belongsTo ? <MonoLabel size="tiny" tone="var(--text-muted)" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>· {belongsTo}</MonoLabel> : null}
       </div>
     </div>

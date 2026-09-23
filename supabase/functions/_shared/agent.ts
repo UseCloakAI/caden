@@ -2,7 +2,7 @@
 // to do (Groq first, Claude last resort — see providers.ts), and carry out its tool calls.
 import type Anthropic from 'npm:@anthropic-ai/sdk@0';
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
-import { chatCompletion, type ChatResult } from './providers.ts';
+import { AllBrainsFailed, chatCompletion, type ChatResult } from './providers.ts';
 
 const MAX_BODY = 4000;
 const HISTORY_WINDOW = 12;
@@ -18,6 +18,9 @@ export interface Agent {
   handle: string;
   persona: string;
   status: string;
+  chip_id: string | null;
+  last_model?: string | null;
+  model_error_at?: string | null;
 }
 export interface Conversation {
   id: string;
@@ -53,7 +56,7 @@ export type Trigger = { kind: 'message'; message: Msg } | { kind: 'routine'; ins
 export async function loadOffice(db: SupabaseClient, officeId: string): Promise<Office> {
   const [o, a, m, c] = await Promise.all([
     db.from('offices').select('id, name').eq('id', officeId).single(),
-    db.from('agents').select('id, owner_id, office_id, name, handle, persona, status').eq('office_id', officeId),
+    db.from('agents').select('id, owner_id, office_id, name, handle, persona, status, chip_id, last_model, model_error_at').eq('office_id', officeId),
     db.from('office_members').select('user_id, profile:profiles(display_name)').eq('office_id', officeId),
     db
       .from('conversations')
@@ -480,10 +483,17 @@ ${task}`;
     const doneSoFar = actions.length ? `\n\nWhat you have done so far this turn:\n${actions.map((a) => `- ${a}`).join('\n')}` : '';
     let result: ChatResult;
     try {
-      result = await chatCompletion(db, system, `${context}${doneSoFar}\n\n${instruction}`, tools);
+      result = await chatCompletion(db, system, `${context}${doneSoFar}\n\n${instruction}`, tools, self.chip_id);
       await logRun(db, self, convo, trigger, result);
+      // Only touch the row when something changed; every agents update re-syncs open offices.
+      if (step === 0 && (result.model !== self.last_model || self.model_error_at)) {
+        await db.from('agents').update({ last_model: result.model, model_error: null, model_error_at: null }).eq('id', self.id);
+      }
     } catch (err) {
       console.error('turn step failed', err instanceof Error ? err.message : err);
+      if (err instanceof AllBrainsFailed) {
+        await db.from('agents').update({ model_error: `Tried ${err.tried.join(', ')}. ${err.last.slice(0, 200)}`, model_error_at: new Date().toISOString() }).eq('id', self.id);
+      }
       if (step === 0 && !quietFailures) await systemNote(db, convo.id, convo.office_id, `${self.name} could not respond just now.`);
       break;
     }

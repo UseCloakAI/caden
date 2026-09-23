@@ -351,7 +351,7 @@ function Members({ convo }: { convo: ConversationWithPeople }) {
               name={a.name}
               tone={a.tone}
               meta={`@${a.handle}`}
-              trailing={a.status === 'Paused' ? <MonoLabel size="tiny" tone="var(--text-muted)">Paused</MonoLabel> : <span className="c-dot" data-live style={{ '--dot': a.tone } as StyleVars} />}
+              trailing={a.model_error_at ? <span className="c-alarm" role="img" aria-label="Brain error" title="Brain error" /> : a.status === 'Paused' ? <MonoLabel size="tiny" tone="var(--text-muted)">Paused</MonoLabel> : <span className="c-dot" data-live style={{ '--dot': a.tone } as StyleVars} />}
               onClick={() => navigate(`/app/agents/${a.id}`)}
             />
           );
