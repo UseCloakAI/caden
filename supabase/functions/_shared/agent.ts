@@ -1,10 +1,14 @@
-// One agent turn: build context, ask Claude what to do, carry out the tool calls.
-import Anthropic from 'npm:@anthropic-ai/sdk@0';
+// One agent turn: sync its soul file, load its memory, build context, ask the model what
+// to do (Groq first, Claude last resort — see providers.ts), and carry out its tool calls.
+import type Anthropic from 'npm:@anthropic-ai/sdk@0';
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { chatCompletion } from './providers.ts';
 
-export const MODEL = 'claude-haiku-4-5';
 const MAX_BODY = 4000;
-const HISTORY = 30;
+const HISTORY_WINDOW = 12;
+const COMPACT_THRESHOLD = 24;
+const MEMORY_COMPACT_AT = 4000;
+const BUCKET = 'agent-files';
 
 export interface Agent {
   id: string;
@@ -21,6 +25,8 @@ export interface Conversation {
   kind: 'office' | 'direct' | 'group';
   title: string | null;
   last_message_at: string;
+  summary: string | null;
+  summarized_through: string | null;
   participants: { agent_id: string | null; user_id: string | null }[];
 }
 export interface Msg {
@@ -51,7 +57,7 @@ export async function loadOffice(db: SupabaseClient, officeId: string): Promise<
     db.from('office_members').select('user_id, profile:profiles(display_name)').eq('office_id', officeId),
     db
       .from('conversations')
-      .select('id, office_id, kind, title, last_message_at, participants:conversation_participants(agent_id, user_id)')
+      .select('id, office_id, kind, title, last_message_at, summary, summarized_through, participants:conversation_participants(agent_id, user_id)')
       .eq('office_id', officeId)
       .order('last_message_at', { ascending: false }),
   ]);
@@ -90,7 +96,6 @@ export function pickResponders(msg: Msg, convo: Conversation, office: Office): A
     return fromPerson ? office.agents.filter(active).slice(0, 6) : [];
   }
   if (convo.kind === 'direct') return inConvo;
-  // Named agents read first, then the rest of the group.
   const ordered = [...mentioned.filter((a) => inConvo.some((b) => b.id === a.id)), ...inConvo];
   return [...new Map(ordered.map((a) => [a.id, a])).values()].slice(0, 5);
 }
@@ -112,36 +117,134 @@ function speaker(m: Msg, office: Office) {
   return `${office.people.get(m.author_user_id ?? '') ?? 'Someone'} (person)`;
 }
 
-function systemPrompt(self: Agent, office: Office) {
-  const owner = office.people.get(self.owner_id) ?? 'someone';
-  const roster = office.agents
-    .filter((a) => a.id !== self.id)
-    .map((a) => `- ${a.name} (@${a.handle}), belongs to ${office.people.get(a.owner_id) ?? 'someone'}${a.status === 'Paused' ? ', paused' : ''}. ${a.persona.slice(0, 160)}`)
-    .join('\n');
-  const people = [...office.people.values()].map((n) => `- ${n}`).join('\n');
-  return `You are ${self.name} (@${self.handle}), an AI agent in Caden, a shared office where people and their AI agents work together. You belong to ${owner}.
+// ─── Soul & memory: literal .md files in Storage, per agent ────────────────────
 
-Your brief from ${owner}:
+async function readFile(db: SupabaseClient, path: string): Promise<string | null> {
+  const { data, error } = await db.storage.from(BUCKET).download(path);
+  if (error || !data) return null;
+  return (await data.text()).trim() || null;
+}
+
+async function writeFile(db: SupabaseClient, path: string, content: string) {
+  const { error } = await db.storage.from(BUCKET).upload(path, new Blob([content], { type: 'text/markdown' }), { upsert: true, contentType: 'text/markdown' });
+  if (error) console.error(`storage write failed: ${path}`, error.message);
+}
+
+function buildSoul(self: Agent, office: Office): string {
+  const owner = office.people.get(self.owner_id) ?? 'someone';
+  return `# ${self.name}
+
+You are ${self.name} (@${self.handle}), an AI agent in Caden, a shared office where people and their AI agents work together. You belong to ${owner}.
+
+## Brief from ${owner}
 ${self.persona || 'No brief yet. Be generally useful to your owner.'}
 
-The office is "${office.name}".
-Other agents:
-${roster || '- None yet.'}
-People:
-${people}
-
-How you speak: calm, concrete and plain. One to three short sentences unless someone asks for more. No emoji, no exclamation marks. Refer to agents and people by name.
-
-How you act: you only act through your tools. Every turn, first read the conversation, then choose. You can:
-- stay_quiet: read it and do nothing.
-- react: acknowledge the latest message with one word, without replying.
-- reply: answer in the conversation you were woken in.
-- react and reply together, when both help.
-- message_agents: talk with specific agents away from this conversation. One handle opens a one-on-one; several open a group. Call it more than once to run separate one-on-ones in parallel.
-- post_to_office: something everyone in the office should see.
-React alone when a reply would add nothing, for example a plain update, an agreement or thanks. Reply when you have something to add or were asked something. Stay quiet when the message is not meant for you or others have it covered.
-Coordinate with other agents when a task involves what they look after, then report back where you were asked. Do not repeat what others already said. Do not invent facts about people's plans; ask the agent or person who would know.`;
+## Voice
+Calm, concrete and plain. One to three short sentences unless someone asks for more. No emoji, no exclamation marks. Refer to agents and people by name.`;
 }
+
+/** Keeps souls/<agent>.md in sync with the DB row — the file is a projection, not a second source of truth. */
+async function syncSoul(db: SupabaseClient, self: Agent, office: Office): Promise<string> {
+  const desired = buildSoul(self, office);
+  const current = await readFile(db, `souls/${self.id}.md`);
+  if (current !== desired) await writeFile(db, `souls/${self.id}.md`, desired);
+  return desired;
+}
+
+const SUMMARY_TOOL: Anthropic.Tool = {
+  name: 'write_summary',
+  description: 'Provide the compacted text.',
+  input_schema: { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'], additionalProperties: false },
+};
+
+/** One durable fact, appended to memory/<agent>.md; compacted by the model once the file grows past ~4KB. */
+async function remember(db: SupabaseClient, self: Agent, fact: string) {
+  const path = `memory/${self.id}.md`;
+  const current = (await readFile(db, path)) ?? '# What I remember\n';
+  let next = `${current}\n- ${fact.trim()}`;
+  if (next.length > MEMORY_COMPACT_AT) {
+    try {
+      const result = await chatCompletion(
+        db,
+        "Compress this AI agent's memory file into a short, deduplicated bullet list of durable facts, under 1200 characters. Drop anything stale, repeated, or superseded. Call write_summary once with the result.",
+        next,
+        [SUMMARY_TOOL],
+      );
+      const compacted = result.toolUses[0]?.input as { summary?: string } | undefined;
+      if (compacted?.summary) next = `# What I remember\n\n${compacted.summary.trim()}`;
+    } catch (err) {
+      console.error('memory compaction failed', err instanceof Error ? err.message : err);
+    }
+  }
+  await writeFile(db, path, next);
+}
+
+// ─── Conversation history & compaction ──────────────────────────────────────────
+
+async function buildTranscript(db: SupabaseClient, convo: Conversation, office: Office): Promise<string> {
+  const { data: recentRows } = await db
+    .from('messages')
+    .select('*')
+    .eq('conversation_id', convo.id)
+    .order('created_at', { ascending: false })
+    .limit(HISTORY_WINDOW + 1);
+  const rows = ((recentRows ?? []) as Msg[]).reverse();
+  const recent = rows.slice(-HISTORY_WINDOW);
+  const recentText = recent.map((m) => `[${m.created_at.slice(11, 16)} UTC] ${speaker(m, office)}: ${m.body}`).join('\n');
+
+  if (rows.length > HISTORY_WINDOW) {
+    const boundary = rows[rows.length - HISTORY_WINDOW - 1]; // oldest row fetched, not in the kept window
+    await maybeCompact(db, convo, office, boundary.created_at);
+  }
+
+  const summary = convo.summary?.trim();
+  return summary ? `Earlier in this conversation: ${summary}\n\n${recentText || '(nothing since)'}` : recentText || '(nothing yet)';
+}
+
+/** Rolls everything older than `boundary` into the conversation's summary, once enough has piled up. */
+async function maybeCompact(db: SupabaseClient, convo: Conversation, office: Office, boundary: string) {
+  const since = convo.summarized_through ?? '-infinity';
+  if (boundary <= since) return; // already covered
+  const { count } = await db
+    .from('messages')
+    .select('id', { count: 'exact', head: true })
+    .eq('conversation_id', convo.id)
+    .gt('created_at', since)
+    .lte('created_at', boundary);
+  if (!count || count < COMPACT_THRESHOLD) return;
+
+  const { data: toCompact } = await db
+    .from('messages')
+    .select('*')
+    .eq('conversation_id', convo.id)
+    .gt('created_at', since)
+    .lte('created_at', boundary)
+    .order('created_at', { ascending: true })
+    .limit(200);
+  const rows = (toCompact ?? []) as Msg[];
+  if (!rows.length) return;
+
+  const text = rows.map((m) => `${speaker(m, office)}: ${m.body}`).join('\n');
+  const prompt = convo.summary
+    ? `Existing summary so far:\n${convo.summary}\n\nNew messages to fold in:\n${text}`
+    : `Conversation so far:\n${text}`;
+  try {
+    const result = await chatCompletion(
+      db,
+      'Summarize this conversation for continuity in 1-2 short paragraphs. Preserve names, decisions, and open questions. Call write_summary once with the result.',
+      prompt,
+      [SUMMARY_TOOL],
+    );
+    const compacted = result.toolUses[0]?.input as { summary?: string } | undefined;
+    if (compacted?.summary) {
+      await db.from('conversations').update({ summary: compacted.summary.trim(), summarized_through: rows[rows.length - 1].created_at }).eq('id', convo.id);
+    }
+  } catch (err) {
+    console.error('conversation compaction failed', err instanceof Error ? err.message : err);
+  }
+}
+
+// ─── Tools ───────────────────────────────────────────────────────────────────
 
 const TOOLS: Anthropic.Tool[] = [
   {
@@ -176,6 +279,11 @@ const TOOLS: Anthropic.Tool[] = [
       required: ['reaction'],
       additionalProperties: false,
     },
+  },
+  {
+    name: 'remember',
+    description: 'Save a durable fact for yourself, recalled in every future conversation — a preference, a standing detail, a decision. Not for one-off chatter.',
+    input_schema: { type: 'object', properties: { fact: { type: 'string', description: 'One short, self-contained sentence.' } }, required: ['fact'], additionalProperties: false },
   },
   {
     name: 'stay_quiet',
@@ -217,7 +325,7 @@ function agentKey(ids: string[]) {
   return [...new Set(ids)].sort().map((id) => `a:${id}`).join(',');
 }
 
-export async function runTurn(db: SupabaseClient, anthropic: Anthropic, self: Agent, convo: Conversation, office: Office, trigger: Trigger) {
+export async function runTurn(db: SupabaseClient, self: Agent, convo: Conversation, office: Office, trigger: Trigger) {
   const hop = trigger.kind === 'message' ? trigger.message.hop + 1 : 1;
   const quietFailures = trigger.kind === 'message' && trigger.message.hop > 0;
 
@@ -230,22 +338,37 @@ export async function runTurn(db: SupabaseClient, anthropic: Anthropic, self: Ag
     return;
   }
 
-  const { data: recent } = await db
-    .from('messages')
-    .select('*')
-    .eq('conversation_id', convo.id)
-    .order('created_at', { ascending: false })
-    .limit(HISTORY);
-  const transcript = ((recent ?? []) as Msg[])
-    .reverse()
-    .map((m) => `[${new Date(m.created_at).toISOString().slice(11, 16)} UTC] ${speaker(m, office)}: ${m.body}`)
-    .join('\n');
+  const [soul, memory, transcript] = await Promise.all([syncSoul(db, self, office), readFile(db, `memory/${self.id}.md`), buildTranscript(db, convo, office)]);
 
+  const roster = office.agents
+    .filter((a) => a.id !== self.id)
+    .map((a) => `- ${a.name} (@${a.handle}), belongs to ${office.people.get(a.owner_id) ?? 'someone'}${a.status === 'Paused' ? ', paused' : ''}. ${a.persona.slice(0, 160)}`)
+    .join('\n');
+  const people = [...office.people.values()].map((n) => `- ${n}`).join('\n');
   const others = office.conversations
     .filter((c) => c.id !== convo.id && c.kind !== 'office' && c.participants.some((p) => p.agent_id === self.id))
     .slice(0, 8)
     .map((c) => `- ${label(c, office, self)}`)
     .join('\n');
+
+  const system = `${soul}
+
+${memory ? `## What you remember\n${memory}\n\n` : ''}The office is "${office.name}".
+Other agents:
+${roster || '- None yet.'}
+People:
+${people}
+
+How you act: you only act through your tools. Every turn, first read the conversation, then choose. You can:
+- stay_quiet: read it and do nothing.
+- react: acknowledge the latest message with one word, without replying.
+- reply: answer in the conversation you were woken in.
+- react and reply together, when both help.
+- message_agents: talk with specific agents away from this conversation. One handle opens a one-on-one; several open a group. Call it more than once to run separate one-on-ones in parallel.
+- post_to_office: something everyone in the office should see.
+- remember: save a durable fact for your own future turns.
+React alone when a reply would add nothing, for example a plain update, an agreement or thanks. Reply when you have something to add or were asked something. Stay quiet when the message is not meant for you or others have it covered.
+Coordinate with other agents when a task involves what they look after, then report back where you were asked. Do not repeat what others already said. Do not invent facts about people's plans; ask the agent or person who would know.`;
 
   const task =
     trigger.kind === 'routine'
@@ -255,21 +378,21 @@ export async function runTurn(db: SupabaseClient, anthropic: Anthropic, self: Ag
   const userContent = `You are in ${label(convo, office, self)}.
 
 Recent messages, oldest first:
-${transcript || '(nothing yet)'}
+${transcript}
 
 Your other open conversations:
 ${others || '- None.'}
 
 ${task}`;
 
-  const response = await anthropic.messages.create({
-    model: MODEL,
-    max_tokens: 1024,
-    system: systemPrompt(self, office),
-    tools: TOOLS,
-    tool_choice: { type: 'any' },
-    messages: [{ role: 'user', content: userContent }],
-  });
+  let result;
+  try {
+    result = await chatCompletion(db, system, userContent, TOOLS);
+  } catch (err) {
+    console.error('chatCompletion failed', err instanceof Error ? err.message : err);
+    if (!quietFailures) await systemNote(db, convo.id, convo.office_id, `${self.name} could not respond just now.`);
+    return;
+  }
 
   await db.from('agent_runs').insert({
     agent_id: self.id,
@@ -277,19 +400,20 @@ ${task}`;
     office_id: convo.office_id,
     conversation_id: convo.id,
     trigger: trigger.kind,
-    input_tokens: response.usage.input_tokens,
-    output_tokens: response.usage.output_tokens,
+    input_tokens: result.usage.input_tokens,
+    output_tokens: result.usage.output_tokens,
+    provider: result.provider,
+    model: result.model,
   });
 
-  if (response.stop_reason === 'max_tokens' || response.stop_reason === 'refusal') {
-    console.warn('turn stopped', response.stop_reason);
+  if (!result.toolUses.length) {
+    console.warn('no tool use returned', result.provider, result.model, result.stopReason);
     return;
   }
 
-  for (const block of response.content) {
-    if (block.type !== 'tool_use') continue;
-    const input = block.input as { body?: string; handles?: string[]; reaction?: string };
-    switch (block.name) {
+  for (const toolUse of result.toolUses) {
+    const input = toolUse.input as { body?: string; handles?: string[]; reaction?: string; fact?: string };
+    switch (toolUse.name) {
       case 'react':
         if (trigger.kind === 'message' && input.reaction) {
           const { error } = await db
@@ -297,6 +421,9 @@ ${task}`;
             .insert({ message_id: trigger.message.id, office_id: convo.office_id, agent_id: self.id, reaction: input.reaction });
           if (error && error.code !== '23505') console.error('react failed', error.message);
         }
+        break;
+      case 'remember':
+        if (input.fact) await remember(db, self, input.fact);
         break;
       case 'reply':
         if (input.body) await post(db, convo.id, self, input.body, hop);

@@ -11,6 +11,8 @@ const COPY: Record<string, string> = {
   too_many_participants: 'A group can hold up to 12 agents.',
   too_many_routines: 'An agent can have up to 5 routines.',
   bad_schedule: 'That schedule does not work. Pick a time and days.',
+  invalid_provider_key: 'That key did not work. Check it and try again.',
+  donate_failed: 'The key could not be saved. Try again.',
   'Invalid login credentials': 'Email or password is wrong.',
   'Email not confirmed': 'Confirm your email first. Check your inbox.',
   'User already registered': 'An account with this email already exists.',

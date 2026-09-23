@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { AnimatedNumber, Button, Dialog, MonoLabel, TextField, useToast } from '@/ds';
-import { supabase } from '@/lib/supabase';
+import { supabase, callFunction } from '@/lib/supabase';
 import { errorCopy } from '@/lib/errors';
 import { useAuth } from '@/lib/auth';
 import { useOffice } from '@/lib/office';
@@ -8,6 +8,11 @@ import { navigate } from '@/lib/router';
 import { ErrorLine, PageHeader, Section, TonePicker } from '../ui';
 
 const DAILY_TOKENS = 200_000;
+
+interface KeyStats {
+  healthy: number;
+  cooling_down: number;
+}
 
 export function SettingsView() {
   const { session, profile, refreshProfile, signOut } = useAuth();
@@ -21,6 +26,33 @@ export function SettingsView() {
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState<'profile' | 'office' | null>(null);
   const [leaving, setLeaving] = useState(false);
+  const [keyStats, setKeyStats] = useState<KeyStats | null>(null);
+  const [donateKey, setDonateKey] = useState('');
+  const [donateBusy, setDonateBusy] = useState(false);
+  const [donateStatus, setDonateStatus] = useState<string | null>(null);
+
+  const loadKeyStats = () => {
+    supabase.rpc('provider_key_stats').maybeSingle().then(({ data }) => setKeyStats(data as KeyStats | null));
+  };
+
+  useEffect(() => {
+    loadKeyStats();
+  }, []);
+
+  const donate = async (e: FormEvent) => {
+    e.preventDefault();
+    setDonateBusy(true);
+    setDonateStatus(null);
+    const res = await callFunction('donate-key', { api_key: donateKey.trim() });
+    setDonateBusy(false);
+    if (res.error) setDonateStatus(errorCopy(res.error));
+    else {
+      setDonateKey('');
+      setDonateStatus('Added. Thanks — it now helps power replies for the whole platform.');
+      toast('Key donated. Thanks for helping power the pool.');
+      loadKeyStats();
+    }
+  };
 
   useEffect(() => {
     const since = new Date(Date.now() - 86400_000).toISOString();
@@ -105,6 +137,20 @@ export function SettingsView() {
             <span style={{ transform: `scaleX(${share})` }} />
           </span>
         </div>
+      </Section>
+
+      <Section
+        title="Community keys"
+        description="Agents reply using a shared, free-tier Groq key pool before falling back to Claude. Donate your own free Groq key (from console.groq.com) and it joins the pool for everyone — used to power other people's agents too, never shown again once saved."
+      >
+        <MonoLabel size="tiny" tone="var(--text-muted)">
+          {keyStats ? `${keyStats.healthy} keys ready · ${keyStats.cooling_down} resting` : 'Checking pool…'}
+        </MonoLabel>
+        <form onSubmit={donate} className="p-form" style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <TextField label="Groq API key" type="password" value={donateKey} onChange={setDonateKey} placeholder="gsk_…" required style={{ flex: 1, minWidth: 220 }} />
+          <Button variant="ghost" type="submit" loading={donateBusy} disabled={!donateKey.trim()}>Donate key</Button>
+        </form>
+        <ErrorLine>{donateStatus}</ErrorLine>
       </Section>
 
       <Section title="Leave or sign out" description={`Leaving ${office?.name ?? 'the office'} takes your agents with you. You can join another office afterwards.`}>
