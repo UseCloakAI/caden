@@ -1,12 +1,12 @@
-import { useState, type FormEvent } from 'react';
-import { AgentAvatar, Button, DisplayHeadline, MonoLabel, Switch, TextArea, TextField } from '@/ds';
+import { useState, type FormEvent, type ReactNode } from 'react';
+import { AgentAvatar, Badge, Button, Dialog, DisplayHeadline, Drawer, MonoLabel, Switch, TextArea, TextField, useToast } from '@/ds';
 import { supabase } from '@/lib/supabase';
 import { errorCopy } from '@/lib/errors';
 import { useAuth } from '@/lib/auth';
 import { AGENT_TONES, useOffice } from '@/lib/office';
 import { navigate } from '@/lib/router';
 import type { Agent } from '@/lib/types';
-import { Drawer, ErrorLine, TonePicker, handleFromName } from '../ui';
+import { ErrorLine, TonePicker, handleFromName } from '../ui';
 import { RoutinesPanel } from './RoutinesPanel';
 
 export function AgentDrawer({ agentId, onClose }: { agentId: string | 'new'; onClose: () => void }) {
@@ -17,7 +17,7 @@ export function AgentDrawer({ agentId, onClose }: { agentId: string | 'new'; onC
 
   if (agentId !== 'new' && !agent) {
     return (
-      <Drawer onClose={onClose}>
+      <Drawer onClose={onClose} eyebrow="Agent">
         <MonoLabel size="tiny" tone="var(--text-muted)">This agent is not in your office.</MonoLabel>
       </Drawer>
     );
@@ -32,20 +32,41 @@ async function openDirect(agentId: string) {
   navigate(`/app/office/${data}`);
 }
 
+function Identity({ name, tone, handle, meta, active, title }: { name: string; tone: string; handle?: string; meta?: string; active?: boolean; title?: ReactNode }) {
+  return (
+    <div className="p-identity">
+      <div className="p-identity__ground" style={{ background: tone }} aria-hidden="true" />
+      <AgentAvatar name={name || 'Agent'} tone={tone} size="xl" active={active} ring="var(--surface-canvas)" />
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-8)', minWidth: 0 }}>
+        <DisplayHeadline size="card" align="left" as="h2">{title ?? name}</DisplayHeadline>
+        {handle || meta ? <MonoLabel size="tiny" tone="var(--text-muted)">{[handle, meta].filter(Boolean).join(' · ')}</MonoLabel> : null}
+      </div>
+    </div>
+  );
+}
+
 function AgentProfile({ agent, owner, onClose }: { agent: Agent; owner?: string; onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   return (
-    <Drawer onClose={onClose}>
-      <AgentAvatar name={agent.name} tone={agent.tone} size="xl" active={agent.status === 'Active'} />
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-8)' }}>
-        <DisplayHeadline size="card" align="left" as="h2">{agent.name}</DisplayHeadline>
-        <MonoLabel size="tiny" tone="var(--text-muted)">{`@${agent.handle} · ${owner ? `${owner}'s` : 'Office'} · ${agent.status}`}</MonoLabel>
-      </div>
-      <p style={{ margin: 0, fontFamily: 'var(--font-sans)', fontWeight: 300, fontSize: 'var(--text-subheading)', lineHeight: 'var(--leading-subheading)', color: 'var(--text-body)' }}>
-        {agent.persona || 'No description yet.'}
-      </p>
+    <Drawer onClose={onClose} eyebrow={`${owner ? `${owner}'s` : 'Office'} agent`} label={agent.name}>
+      <Identity name={agent.name} tone={agent.tone} handle={`@${agent.handle}`} meta={agent.status} active={agent.status === 'Active'} />
+      <p className="p-lede">{agent.persona || 'No description yet.'}</p>
       <ErrorLine>{error}</ErrorLine>
-      <Button variant="primary" arrow icon="message-circle" onClick={() => openDirect(agent.id).catch((e) => setError(errorCopy(e)))} style={{ alignSelf: 'flex-start' }}>
+      <Button
+        variant="primary"
+        arrow
+        icon="message-circle"
+        loading={busy}
+        onClick={() => {
+          setBusy(true);
+          openDirect(agent.id).catch((e) => {
+            setBusy(false);
+            setError(errorCopy(e));
+          });
+        }}
+        style={{ alignSelf: 'flex-start' }}
+      >
         {`Message ${agent.name}`}
       </Button>
     </Drawer>
@@ -54,6 +75,7 @@ function AgentProfile({ agent, owner, onClose }: { agent: Agent; owner?: string;
 
 function AgentForm({ agent, nextTone, onClose, onSaved }: { agent?: Agent; nextTone: string; onClose: () => void; onSaved: () => Promise<void> }) {
   const { session } = useAuth();
+  const toast = useToast();
   const [name, setName] = useState(agent?.name ?? '');
   const [handle, setHandle] = useState(agent?.handle ?? '');
   const [handleTouched, setHandleTouched] = useState(false);
@@ -62,7 +84,10 @@ function AgentForm({ agent, nextTone, onClose, onSaved }: { agent?: Agent; nextT
   const [paused, setPaused] = useState(agent?.status === 'Paused');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [opening, setOpening] = useState(false);
   const shownHandle = agent || handleTouched ? handle : handleFromName(name);
+  const dirty = !agent || name !== agent.name || tone !== agent.tone || persona !== agent.persona || paused !== (agent.status === 'Paused');
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
@@ -78,25 +103,37 @@ function AgentForm({ agent, nextTone, onClose, onSaved }: { agent?: Agent; nextT
       return;
     }
     await onSaved();
+    toast(agent ? `${fields.name} saved.` : `${fields.name} joined the office.`);
     if (!agent && data) navigate(`/app/agents/${data.id}`);
   };
 
   const remove = async () => {
-    if (!agent || !window.confirm(`Delete ${agent.name}? Its messages stay in the threads.`)) return;
+    if (!agent) return;
     const { error: err } = await supabase.from('agents').delete().eq('id', agent.id);
     if (err) setError(errorCopy(err));
     else {
       await onSaved();
+      toast(`${agent.name} deleted.`, { icon: 'trash' });
       onClose();
     }
   };
 
   return (
-    <Drawer onClose={onClose}>
-      <AgentAvatar name={name || 'Agent'} tone={tone} size="xl" active={!!agent && !paused} />
-      <DisplayHeadline size="card" align="left" as="h2">{agent ? agent.name : <>A new <em>agent</em>.</>}</DisplayHeadline>
+    <Drawer
+      onClose={onClose}
+      eyebrow={agent ? 'Your agent' : 'New agent'}
+      label={agent ? agent.name : 'New agent'}
+      actions={agent ? <Badge variant="quiet" dot={paused ? 'var(--color-fog)' : 'live'}>{paused ? 'Paused' : 'Active'}</Badge> : null}
+    >
+      <Identity
+        name={name}
+        tone={tone}
+        handle={shownHandle ? `@${shownHandle.replace(/^@/, '')}` : undefined}
+        active={!!agent && !paused}
+        title={agent ? name || agent.name : name ? name : <>A new <em>agent</em>.</>}
+      />
       <form onSubmit={save} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-20)' }}>
-        <TextField label="Name" value={name} onChange={setName} required maxLength={40} placeholder="Maya" />
+        <TextField label="Name" value={name} onChange={setName} required maxLength={40} placeholder="Maya" autoFocus={!agent} />
         <TextField
           label="Handle"
           value={shownHandle}
@@ -119,20 +156,43 @@ function AgentForm({ agent, nextTone, onClose, onSaved }: { agent?: Agent; nextT
           placeholder="Runs the household calendar. Warm, brief, and never double-books Sunday."
           hint="This is the agent's brief. It shapes every reply."
         />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-12)' }}>
+        <label className="p-toggle-row">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
+            <span className="p-toggle-row__title">{paused ? 'Paused' : 'Active'}</span>
+            <MonoLabel size="tiny" tone="var(--text-muted)">{paused ? 'Will not read or reply' : 'Replies when addressed'}</MonoLabel>
+          </div>
           <Switch checked={!paused} onChange={(on) => setPaused(!on)} aria-label="Active" />
-          <MonoLabel size="tiny">{paused ? 'Paused · will not reply' : 'Active · replies when addressed'}</MonoLabel>
-        </div>
+        </label>
         <ErrorLine>{error}</ErrorLine>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-12)' }}>
-          {agent ? <Button variant="text" type="button" onClick={remove}>Delete agent</Button> : null}
-          {agent ? <Button variant="ghost" type="button" icon="message-circle" onClick={() => openDirect(agent.id).catch((e) => setError(errorCopy(e)))}>Message</Button> : null}
-          <Button variant="primary" arrow type="submit" disabled={busy || !name.trim()} style={{ marginLeft: 'auto' }}>
+        <div className="p-form-actions">
+          {agent ? <Button variant="text" icon="trash" onClick={() => setConfirmDelete(true)} style={{ paddingLeft: 0 }}>Delete</Button> : null}
+          {agent ? (
+            <Button
+              variant="ghost"
+              icon="message-circle"
+              loading={opening}
+              onClick={() => {
+                setOpening(true);
+                openDirect(agent.id).catch((e) => {
+                  setOpening(false);
+                  setError(errorCopy(e));
+                });
+              }}
+            >
+              Message
+            </Button>
+          ) : null}
+          <Button variant="primary" arrow type="submit" loading={busy} disabled={!name.trim() || !dirty} style={{ marginLeft: 'auto' }}>
             {agent ? 'Save agent' : 'Create agent'}
           </Button>
         </div>
       </form>
       {agent ? <RoutinesPanel agent={agent} /> : null}
+      {confirmDelete && agent ? (
+        <Dialog onClose={() => setConfirmDelete(false)} title={`Delete ${agent.name}?`} confirmLabel="Delete agent" onConfirm={remove}>
+          {`${agent.name} leaves the office and its routines stop. Its messages stay in the threads.`}
+        </Dialog>
+      ) : null}
     </Drawer>
   );
 }

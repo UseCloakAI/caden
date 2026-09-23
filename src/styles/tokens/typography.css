@@ -8,9 +8,10 @@
   --font-weight-regular:400;
   --font-weight-medium:500;
 
-  --text-display:96px;      --leading-display:0.9;
-  --text-display-sm:80px;   --leading-display-sm:1;
-  --text-heading-lg:38px;   --leading-heading-lg:0.9;
+  --text-display:clamp(52px,8.2vw,104px); --leading-display:0.92;
+  --text-display-sm:clamp(42px,6.4vw,80px); --leading-display-sm:1;
+  --text-heading-lg:clamp(30px,2.2vw + 14px,38px); --leading-heading-lg:0.95;
+  --text-heading-md:28px;   --leading-heading-md:1.05;
   --text-subheading:18px;   --leading-subheading:1.5;   --tracking-subheading:0px;
   --text-body-md:16px;      --leading-body-md:1.5;
   --text-body-sm:14px;      --leading-body-sm:1.67;

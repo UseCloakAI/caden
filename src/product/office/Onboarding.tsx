@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react';
 import { Button, MonoLabel, TextField } from '@/ds';
 import { supabase } from '@/lib/supabase';
 import { errorCopy } from '@/lib/errors';
+import { useAuth } from '@/lib/auth';
 import { useOffice } from '@/lib/office';
 import { navigate } from '@/lib/router';
 import { AuthLayout, FormError } from '../auth/AuthLayout';
@@ -13,6 +14,7 @@ function tokenFrom(input: string) {
 
 export function Onboarding() {
   const { reload } = useOffice();
+  const { signOut } = useAuth();
   const [name, setName] = useState('');
   const [link, setLink] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -39,15 +41,21 @@ export function Onboarding() {
   };
 
   return (
-    <AuthLayout title={<>Start an <em>office</em>.</>} subtitle="An office is where your agents and your people's agents work together. You can be in one at a time.">
+    <AuthLayout
+      title={<>Start an <em>office</em>.</>}
+      subtitle="An office is where your agents and your people's agents work together. You can be in one at a time."
+      aside={<Button variant="text" icon="log-out" onClick={() => signOut()} style={{ paddingLeft: 0 }}>Sign out</Button>}
+    >
       <form onSubmit={start} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-16)' }}>
-        <TextField label="Office name" value={name} onChange={setName} placeholder="The Alvarez house" required maxLength={60} />
-        <Button variant="primary" arrow type="submit" disabled={busy || !name.trim()} style={{ justifyContent: 'center' }}>Start an office</Button>
+        <TextField label="Office name" value={name} onChange={setName} placeholder="The Alvarez house" required maxLength={60} autoFocus />
+        <Button variant="primary" size="lg" arrow type="submit" loading={busy} disabled={!name.trim()} block>Start an office</Button>
       </form>
-      <MonoLabel size="tiny" tone="var(--text-muted)" style={{ textAlign: 'center' }}>Or</MonoLabel>
+      <div className="p-or" role="separator">
+        <MonoLabel size="tiny" tone="var(--text-muted)">Or join one</MonoLabel>
+      </div>
       <form onSubmit={join} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-16)' }}>
         <TextField label="Invite link" value={link} onChange={setLink} placeholder="https://usecloakai.github.io/caden/#/join/…" />
-        <Button variant="ghost" type="submit" disabled={!link.trim()} style={{ justifyContent: 'center' }}>Join with a link</Button>
+        <Button variant="ghost" type="submit" disabled={!link.trim()} block>Join with a link</Button>
       </form>
       <FormError>{error}</FormError>
     </AuthLayout>

@@ -32,6 +32,9 @@
   --surface-glass:rgba(255,255,255,0.1);
   --surface-glass-strong:rgba(255,255,255,0.2);
   --surface-chip:rgba(255,255,255,0.12);
+  --surface-raised:#18191a;
+  --surface-hover-soft:rgba(255,255,255,0.05);
+  --surface-scrim:rgba(9,10,11,0.62);
 
   /* Text */
   --text-primary:var(--color-pure);
@@ -45,6 +48,9 @@
   --border-hairline:1px solid rgba(255,255,255,0.1); /* @kind other */
   --border-glass:1px solid rgba(255,255,255,0.15); /* @kind other */
   --border-solid:1px solid var(--color-pure); /* @kind other */
+  --border-strong:1px solid rgba(255,255,255,0.18); /* @kind other */
+  --line-hairline:rgba(255,255,255,0.1);
+  --line-strong:rgba(255,255,255,0.18);
 
   /* Actions */
   --action-fill:var(--color-pure);

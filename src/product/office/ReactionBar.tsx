@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { MonoLabel } from '@/ds';
+import { MonoLabel, cx } from '@/ds';
 import { supabase } from '@/lib/supabase';
 import { errorCopy } from '@/lib/errors';
 import { useOffice } from '@/lib/office';
@@ -7,21 +7,9 @@ import { REACTIONS, type Reaction, type ReactionWord } from '@/lib/types';
 
 const LABEL: Record<ReactionWord, string> = { seen: 'Seen', agree: 'Agree', on_it: 'On it', done: 'Done', thanks: 'Thanks', disagree: 'Disagree' };
 
-const chip = (on: boolean) => ({
-  display: 'inline-flex',
-  alignItems: 'center',
-  gap: 'var(--spacing-4)',
-  padding: '3px 10px',
-  borderRadius: 'var(--radius-pill)',
-  border: on ? 'var(--border-glass)' : 'var(--border-hairline)',
-  background: on ? 'var(--surface-glass)' : 'transparent',
-  cursor: 'pointer',
-  transition: 'var(--transition-state)',
-});
-
 /**
  * Word reactions under a message ("AGREE · Maya, Zeph"). Agents add theirs server-side;
- * people toggle their own here.
+ * people toggle their own here. The picker only surfaces on hover or focus.
  */
 export function ReactionBar({
   messageId,
@@ -29,12 +17,14 @@ export function ReactionBar({
   me,
   onLocal,
   onError,
+  align = 'start',
 }: {
   messageId: string;
   reactions: Reaction[];
   me: string | undefined;
   onLocal: (change: { add?: Reaction; removeId?: string }) => void;
   onError: (message: string) => void;
+  align?: 'start' | 'end';
 }) {
   const { agentById, memberById } = useOffice();
   const [picking, setPicking] = useState(false);
@@ -58,22 +48,24 @@ export function ReactionBar({
   };
 
   return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--spacing-4)', alignItems: 'center' }}>
+    <div className={cx('p-reactions', picking && 'is-picking')} style={{ justifyContent: align === 'end' ? 'flex-end' : 'flex-start' }}>
       {grouped.map(({ word, list }) => (
-        <button key={word} type="button" onClick={() => toggle(word)} title={list.map(who).join(', ')} style={chip(list.some((r) => r.user_id === me))}>
+        <button key={word} type="button" onClick={() => toggle(word)} title={list.map(who).join(', ')} className="p-react" aria-pressed={list.some((r) => r.user_id === me)}>
           <MonoLabel size="tiny" tone="var(--color-cloud)">{LABEL[word]}</MonoLabel>
           <MonoLabel size="tiny" tone="var(--text-muted)">{`· ${list.map(who).join(', ')}`}</MonoLabel>
         </button>
       ))}
       {picking ? (
-        REACTIONS.map((word) => (
-          <button key={word} type="button" onClick={() => toggle(word)} style={chip(false)}>
-            <MonoLabel size="tiny">{LABEL[word]}</MonoLabel>
-          </button>
-        ))
+        <span className="p-react-picker" onMouseLeave={() => setPicking(false)}>
+          {REACTIONS.map((word, i) => (
+            <button key={word} type="button" onClick={() => toggle(word)} className="p-react p-react--pick" style={{ animationDelay: `${i * 25}ms` }}>
+              <MonoLabel size="tiny" tone="var(--color-cloud)">{LABEL[word]}</MonoLabel>
+            </button>
+          ))}
+        </span>
       ) : (
-        <button type="button" onClick={() => setPicking(true)} aria-label="React" style={{ ...chip(false), border: '1px solid transparent', opacity: 0.6 }}>
-          <MonoLabel size="tiny" tone="var(--text-muted)">React</MonoLabel>
+        <button type="button" onClick={() => setPicking(true)} aria-label="React" className="p-react p-react--add">
+          <MonoLabel size="tiny" tone="currentColor">React</MonoLabel>
         </button>
       )}
     </div>

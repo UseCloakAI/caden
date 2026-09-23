@@ -1,5 +1,5 @@
 import { useEffect, type ReactNode } from 'react';
-import { MonoLabel } from '@/ds';
+import { ToastProvider } from '@/ds';
 import { useAuth } from '@/lib/auth';
 import { navigate } from '@/lib/router';
 import { OfficeProvider, useOffice } from '@/lib/office';
@@ -7,14 +7,8 @@ import { useRoute } from '@/lib/router';
 import { Onboarding } from './office/Onboarding';
 import { JoinScreen } from './office/JoinScreen';
 import { Shell } from './Shell';
-
-export function Loading() {
-  return (
-    <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--surface-canvas)' }}>
-      <MonoLabel size="tiny" tone="var(--text-muted)">Loading</MonoLabel>
-    </div>
-  );
-}
+import { Loading } from './Loading';
+import './product.css';
 
 /** Signed in (Supabase only issues sessions to confirmed emails). */
 export function RequireAuth({ children }: { children: ReactNode }) {
@@ -24,8 +18,8 @@ export function RequireAuth({ children }: { children: ReactNode }) {
     if (!loading && !session) navigate('/signin');
   }, [loading, session]);
 
-  if (loading || !session || !profile) return <Loading />;
-  return <div style={{ height: '100vh', position: 'relative' }}>{children}</div>;
+  if (loading || !session || !profile) return <Loading label={loading ? 'Signing you in' : 'Opening your office'} />;
+  return <>{children}</>;
 }
 
 function OfficeGate() {
@@ -39,10 +33,12 @@ function OfficeGate() {
 
 export function ProductApp() {
   return (
-    <RequireAuth>
-      <OfficeProvider>
-        <OfficeGate />
-      </OfficeProvider>
-    </RequireAuth>
+    <ToastProvider>
+      <RequireAuth>
+        <OfficeProvider>
+          <OfficeGate />
+        </OfficeProvider>
+      </RequireAuth>
+    </ToastProvider>
   );
 }

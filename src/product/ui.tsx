@@ -1,52 +1,36 @@
 import type { ReactNode } from 'react';
-import { Button, DisplayHeadline, MonoLabel } from '@/ds';
+import { DisplayHeadline, Icon, MonoLabel, Subhead, type IconName } from '@/ds';
 import type { ConversationWithPeople, Member } from '@/lib/office';
 import type { Agent } from '@/lib/types';
 import { AGENT_TONES } from '@/lib/office';
 
-/** Right-hand drawer over a blurred scrim, matching the app kit's agent drawer. */
-export function Drawer({ onClose, children, width = 460 }: { onClose: () => void; children: ReactNode; width?: number }) {
-  return (
-    <div style={{ position: 'absolute', inset: 0, zIndex: 30, display: 'flex', justifyContent: 'flex-end' }}>
-      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(9,10,11,0.6)', backdropFilter: 'var(--blur-glass)' }} />
-      <div
-        role="dialog"
-        style={{
-          position: 'relative',
-          width: '100%',
-          maxWidth: width,
-          background: 'var(--surface-canvas)',
-          borderLeft: 'var(--border-hairline)',
-          padding: 'var(--spacing-32)',
-          overflowY: 'auto',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 'var(--spacing-24)',
-        }}
-      >
-        <Button variant="glass" icon="x" aria-label="Close" onClick={onClose} style={{ position: 'absolute', top: 'var(--spacing-24)', right: 'var(--spacing-24)' }} />
-        {children}
-      </div>
-    </div>
-  );
-}
+export { Drawer } from '@/ds';
 
-export function PageHeader({ eyebrow, title, action }: { eyebrow: string; title: ReactNode; action?: ReactNode }) {
+/** People have no identity colour; they sit on Steel. */
+export const HUMAN_TONE = 'var(--color-steel)';
+
+export function PageHeader({ eyebrow, title, sub, action }: { eyebrow: string; title: ReactNode; sub?: ReactNode; action?: ReactNode }) {
   return (
-    <header style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 'var(--spacing-24)', flexWrap: 'wrap' }}>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-12)' }}>
+    <header className="p-page-head">
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-12)', minWidth: 0 }}>
         <MonoLabel size="micro" tone="var(--text-muted)">{eyebrow}</MonoLabel>
-        <DisplayHeadline size="card" align="left" as="h1">{title}</DisplayHeadline>
+        <DisplayHeadline size="card" align="left" as="h1" animate={40}>{title}</DisplayHeadline>
+        {sub ? <Subhead align="left" maxWidth={560} style={{ fontSize: 'var(--text-body-md)' }}>{sub}</Subhead> : null}
       </div>
-      {action}
+      {action ? <div className="p-page-head__action">{action}</div> : null}
     </header>
   );
 }
 
-export function EmptyState({ fact, action }: { fact: string; action?: ReactNode }) {
+/** The fact, then the single next action. */
+export function EmptyState({ fact, detail, action, icon = 'users' }: { fact: string; detail?: string; action?: ReactNode; icon?: IconName }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 'var(--spacing-12)', padding: 'var(--spacing-24) 0' }}>
-      <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--text-body-md)', color: 'var(--text-body)' }}>{fact}</span>
+    <div className="p-empty">
+      <span className="p-empty__icon"><Icon name={icon} size={20} tone="ash" /></span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-4)' }}>
+        <span className="p-empty__fact">{fact}</span>
+        {detail ? <span className="p-empty__detail">{detail}</span> : null}
+      </div>
       {action}
     </div>
   );
@@ -54,35 +38,40 @@ export function EmptyState({ fact, action }: { fact: string; action?: ReactNode 
 
 export function ErrorLine({ children }: { children?: ReactNode }) {
   if (!children) return null;
-  return <MonoLabel size="tiny" tone="var(--color-cloud)" role="alert">{children}</MonoLabel>;
+  return <p className="p-alert" role="alert">{children}</p>;
+}
+
+/** Section card: mono title, optional description, content. */
+export function Section({ title, description, action, children, id }: { title: string; description?: ReactNode; action?: ReactNode; children?: ReactNode; id?: string }) {
+  return (
+    <section className="p-section" id={id}>
+      <div className="p-section__head">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-8)', minWidth: 0 }}>
+          <MonoLabel size="micro" tone="var(--color-cloud)">{title}</MonoLabel>
+          {description ? <p className="p-section__desc">{description}</p> : null}
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
 }
 
 /** The six agent identity grounds as round swatches. */
-export function TonePicker({ value, onChange }: { value: string; onChange: (tone: string) => void }) {
+export function TonePicker({ value, onChange, label = 'Colour' }: { value: string; onChange: (tone: string) => void; label?: string }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-8)' }}>
-      <MonoLabel size="tiny">Colour</MonoLabel>
-      <div style={{ display: 'flex', gap: 'var(--spacing-8)' }}>
-        {AGENT_TONES.map((tone) => (
-          <button
-            key={tone}
-            type="button"
-            aria-label={tone.replace('var(--color-', '').replace(')', '')}
-            aria-pressed={value === tone}
-            onClick={() => onChange(tone)}
-            style={{
-              width: 32,
-              height: 32,
-              borderRadius: 'var(--radius-pill)',
-              background: tone,
-              border: value === tone ? '2px solid var(--color-pure)' : '2px solid transparent',
-              outline: value === tone ? '1px solid var(--color-void)' : 'none',
-              outlineOffset: -3,
-              cursor: 'pointer',
-              transition: 'var(--transition-state)',
-            }}
-          />
-        ))}
+    <div role="radiogroup" aria-label={label} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-8)' }}>
+      <MonoLabel size="tiny">{label}</MonoLabel>
+      <div style={{ display: 'flex', gap: 'var(--spacing-8)', flexWrap: 'wrap' }}>
+        {AGENT_TONES.map((tone) => {
+          const on = value === tone;
+          const name = tone.replace('var(--color-', '').replace(')', '').replace('-', ' ');
+          return (
+            <button key={tone} type="button" role="radio" aria-label={name} aria-checked={on} title={name} onClick={() => onChange(tone)} className="p-swatch" style={{ background: tone }}>
+              <Icon name="check" size={14} tone={['var(--color-periwinkle)', 'var(--color-orchid-bloom)'].includes(tone) ? 'dark' : 'pure'} strokeWidth={2.5} />
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -92,6 +81,9 @@ export function handleFromName(name: string) {
   const base = name.toLowerCase().replace(/[^a-z0-9]+/g, '.').replace(/^\.+|\.+$/g, '').slice(0, 17);
   return base ? `${base}.agent` : '';
 }
+
+/** Initials-friendly name for a person. */
+export const personName = (m: Member | undefined, me?: string) => (m?.user_id === me ? 'You' : m?.profile?.display_name || 'Someone');
 
 /** Who a thread is between, from your point of view. */
 export function conversationLabel(
@@ -107,4 +99,17 @@ export function conversationLabel(
     .filter((p) => p.user_id !== me)
     .map((p) => (p.agent_id ? agentById(p.agent_id)?.name : memberById(p.user_id)?.profile?.display_name) ?? 'Someone');
   return names.join(' · ') || 'Just you';
+}
+
+/** Everyone in a thread (minus you) as avatar data, agents first. */
+export function conversationFaces(
+  convo: ConversationWithPeople,
+  me: string | undefined,
+  agentById: (id: string | null) => Agent | undefined,
+  memberById: (id: string | null) => Member | undefined,
+) {
+  const others = convo.participants.filter((p) => p.user_id !== me);
+  const agents = others.flatMap((p) => (p.agent_id ? [agentById(p.agent_id)] : [])).filter((a): a is Agent => !!a).map((a) => ({ name: a.name, tone: a.tone }));
+  const people = others.flatMap((p) => (p.user_id ? [{ name: memberById(p.user_id)?.profile?.display_name || 'Someone', tone: HUMAN_TONE }] : []));
+  return [...agents, ...people];
 }

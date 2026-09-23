@@ -14,7 +14,10 @@
   --radius-featurecards:var(--radius-tile);
   --radius-categorytiles:var(--radius-tile);
 
-  /* One shadow exists in the system. Elevation is color stepping, not depth. */
+  /* Elevation on the page is colour stepping, not depth. --shadow-lg is the one page shadow;
+     --shadow-float is for chrome that floats above the page (drawers, dialogs, popovers, toasts). */
   --shadow-lg:rgba(0,0,0,0.2) 0px 18px 20px 0px;
+  --shadow-float:0 0 0 1px rgba(255,255,255,0.06),0 24px 48px -12px rgba(0,0,0,0.6),0 8px 16px -8px rgba(0,0,0,0.4); /* @kind other */
+  --shadow-specular:inset 0 1px 0 rgba(255,255,255,0.08); /* @kind other */
   --blur-glass:blur(24px); /* @kind other */
 }

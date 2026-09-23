@@ -51,8 +51,8 @@ const adherence = [
     "message": "<GlassSurface> variant must be one of 'bar' | 'card' | 'pill' | 'button' | 'sheet'."
   },
   {
-    "selector": "JSXOpeningElement[name.name='Icon'] > JSXAttribute[name.name='tone'] > Literal[value!=/^(?:pure|ash|muted|dark)$/]",
-    "message": "<Icon> tone must be one of 'pure' | 'ash' | 'muted' | 'dark'."
+    "selector": "JSXOpeningElement[name.name='Icon'] > JSXAttribute[name.name='tone'] > Literal[value!=/^(?:pure|ash|muted|dark|current)$/]",
+    "message": "<Icon> tone must be one of 'pure' | 'ash' | 'muted' | 'dark' | 'current'."
   },
   {
     "selector": "JSXOpeningElement[name.name='Message'] > JSXAttribute[name.name='kind'] > Literal[value!=/^(?:agent|you|system)$/]",
