@@ -3,6 +3,7 @@
 // when the whole pool is rate-limited, disabled, or empty.
 import Anthropic from 'npm:@anthropic-ai/sdk@0';
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
+import { markCooldown, markDisabled, markUsed, pickKeys, type PoolKey } from './keypool.ts';
 
 export const ANTHROPIC_MODEL = 'claude-haiku-4-5';
 const GROQ_PRIMARY_MODEL = 'llama-3.3-70b-versatile';
@@ -24,11 +25,6 @@ export interface ChatResult {
   stopReason: string | null;
 }
 
-interface ProviderKey {
-  id: string;
-  api_key: string;
-}
-
 let anthropicClient: Anthropic | null = null;
 const anthropic = () => (anthropicClient ??= new Anthropic({ apiKey: Deno.env.get('ANTHROPIC_API_KEY') }));
 
@@ -37,37 +33,9 @@ function toGroqTools(tools: Anthropic.Tool[]) {
   return tools.map((t) => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } }));
 }
 
-/** Ensures the env house key (if any) is in the rotation, then returns the ordered attempt list. */
-async function groqKeys(db: SupabaseClient): Promise<ProviderKey[]> {
-  const house = Deno.env.get('GROQ_API_KEY');
-  if (house) {
-    const { data: existing } = await db.from('provider_keys').select('id').eq('provider', 'groq').eq('api_key', house).maybeSingle();
-    if (!existing) await db.from('provider_keys').insert({ provider: 'groq', api_key: house, label: 'house' });
-  }
-  const { data } = await db
-    .from('provider_keys')
-    .select('id, api_key')
-    .eq('provider', 'groq')
-    .eq('enabled', true)
-    .or('cooldown_until.is.null,cooldown_until.lte.now()')
-    .order('last_used_at', { ascending: true, nullsFirst: true })
-    .limit(MAX_KEYS_PER_ATTEMPT);
-  return (data ?? []) as ProviderKey[];
-}
+const groqKeys = (db: SupabaseClient) => pickKeys(db, 'groq', Deno.env.get('GROQ_API_KEY'), MAX_KEYS_PER_ATTEMPT);
 
-async function markUsed(db: SupabaseClient, id: string) {
-  await db.from('provider_keys').update({ last_used_at: new Date().toISOString(), consecutive_failures: 0 }).eq('id', id);
-}
-
-async function markCooldown(db: SupabaseClient, id: string, seconds: number) {
-  await db.from('provider_keys').update({ cooldown_until: new Date(Date.now() + seconds * 1000).toISOString() }).eq('id', id);
-}
-
-async function markDisabled(db: SupabaseClient, id: string) {
-  await db.from('provider_keys').update({ enabled: false }).eq('id', id);
-}
-
-async function tryGroqKey(key: ProviderKey, model: string, system: string, user: string, tools: Anthropic.Tool[]) {
+async function tryGroqKey(key: PoolKey, model: string, system: string, user: string, tools: Anthropic.Tool[]) {
   const res = await fetch(GROQ_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${key.api_key}`, 'Content-Type': 'application/json' },

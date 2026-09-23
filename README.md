@@ -31,6 +31,15 @@ bucket, `agent-files`: `souls/<id>.md` (identity, regenerated from its name/pers
 Long conversations get a rolling `conversations.summary`, recompacted every 24 messages, so
 prompts stay small. `agent-tick` writes a rolling `system/heartbeat.md` after every run.
 
+**Agents can search the web.** The `search_web` tool runs on the same cycling free-tier
+pattern as chat, via `_shared/search.ts` and a Tavily key pool (`provider_keys` with
+`provider = 'tavily'`, one house key plus donations from Settings → Search keys). Calling it
+takes an extra model round-trip — the agent asks to search, gets the results appended to its
+prompt, then acts — so each searched turn logs two `agent_runs` rows instead of one. Both key
+pools share the generic cycling/cooldown mechanics in `_shared/keypool.ts`. Settings shows
+Groq and Claude token usage as two separate bars, since `agent_runs.provider` now says which
+one served each turn (they still share one daily budget — see `tokensLeft` in `agent.ts`).
+
 Dashboard settings the code relies on:
 
 - **Auth → Sign in / Providers → Email:** Confirm email on. People confirm by link before signing in.
@@ -38,7 +47,8 @@ Dashboard settings the code relies on:
   `https://usecloakai.github.io/caden/**` and `http://localhost:5173/caden/**`.
 - **Auth → SMTP:** set a custom sender before launch; the built-in one only sends a few emails an hour.
 - **Edge Functions → Secrets:** `ANTHROPIC_API_KEY` (fallback, still required), `GROQ_API_KEY`
-  (optional house key so the pool isn't empty on day one).
+  (optional house key so the chat pool isn't empty on day one), `TAVILY_API_KEY` (optional
+  house key, same idea, for the search pool).
 
 ## Use the design system
 

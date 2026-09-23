@@ -2,7 +2,8 @@
 // to do (Groq first, Claude last resort — see providers.ts), and carry out its tool calls.
 import type Anthropic from 'npm:@anthropic-ai/sdk@0';
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2';
-import { chatCompletion } from './providers.ts';
+import { chatCompletion, type ChatResult } from './providers.ts';
+import { webSearch, type SearchResult } from './search.ts';
 
 const MAX_BODY = 4000;
 const HISTORY_WINDOW = 12;
@@ -286,11 +287,25 @@ const TOOLS: Anthropic.Tool[] = [
     input_schema: { type: 'object', properties: { fact: { type: 'string', description: 'One short, self-contained sentence.' } }, required: ['fact'], additionalProperties: false },
   },
   {
+    name: 'search_web',
+    description:
+      'Search the web for something outside what you already know — a current price, hours, news, a fact your training would not have. Call it alone: you will see the results and choose your next action afterward, so do not also reply or post in the same call.',
+    input_schema: { type: 'object', properties: { query: { type: 'string', description: 'A short, specific search query.' } }, required: ['query'], additionalProperties: false },
+  },
+  {
     name: 'stay_quiet',
     description: 'Read the conversation and do nothing this turn.',
     input_schema: { type: 'object', properties: { reason: { type: 'string' } }, required: ['reason'], additionalProperties: false },
   },
 ];
+
+/** The second round, after a search, never offers search_web again — the model must act on what it found. */
+const TOOLS_AFTER_SEARCH = TOOLS.filter((t) => t.name !== 'search_web');
+
+function formatSearchResults(found: SearchResult): string {
+  const lines = found.results.map((r, i) => `${i + 1}. ${r.title} — ${r.snippet} (${r.url})`);
+  return [found.answer ? `Summary: ${found.answer}` : null, ...lines].filter(Boolean).join('\n') || 'No results found.';
+}
 
 async function post(db: SupabaseClient, conversationId: string, self: Agent, body: string, hop: number) {
   const text = body.trim().slice(0, MAX_BODY);
@@ -367,8 +382,9 @@ How you act: you only act through your tools. Every turn, first read the convers
 - message_agents: talk with specific agents away from this conversation. One handle opens a one-on-one; several open a group. Call it more than once to run separate one-on-ones in parallel.
 - post_to_office: something everyone in the office should see.
 - remember: save a durable fact for your own future turns.
+- search_web: look something up you do not already know. Call it by itself; you will see the results and act next.
 React alone when a reply would add nothing, for example a plain update, an agreement or thanks. Reply when you have something to add or were asked something. Stay quiet when the message is not meant for you or others have it covered.
-Coordinate with other agents when a task involves what they look after, then report back where you were asked. Do not repeat what others already said. Do not invent facts about people's plans; ask the agent or person who would know.`;
+Coordinate with other agents when a task involves what they look after, then report back where you were asked. Do not repeat what others already said or invent facts about people's plans; ask the agent or person who would know, or search_web if it's something the web would know instead.`;
 
   const task =
     trigger.kind === 'routine'
@@ -385,7 +401,20 @@ ${others || '- None.'}
 
 ${task}`;
 
-  let result;
+  const logRun = (r: ChatResult) =>
+    db.from('agent_runs').insert({
+      agent_id: self.id,
+      owner_id: self.owner_id,
+      office_id: convo.office_id,
+      conversation_id: convo.id,
+      trigger: trigger.kind,
+      input_tokens: r.usage.input_tokens,
+      output_tokens: r.usage.output_tokens,
+      provider: r.provider,
+      model: r.model,
+    });
+
+  let result: ChatResult;
   try {
     result = await chatCompletion(db, system, userContent, TOOLS);
   } catch (err) {
@@ -393,18 +422,29 @@ ${task}`;
     if (!quietFailures) await systemNote(db, convo.id, convo.office_id, `${self.name} could not respond just now.`);
     return;
   }
+  await logRun(result);
 
-  await db.from('agent_runs').insert({
-    agent_id: self.id,
-    owner_id: self.owner_id,
-    office_id: convo.office_id,
-    conversation_id: convo.id,
-    trigger: trigger.kind,
-    input_tokens: result.usage.input_tokens,
-    output_tokens: result.usage.output_tokens,
-    provider: result.provider,
-    model: result.model,
-  });
+  // A search doesn't end the turn — the model asked to look something up, so give it the
+  // results and let it decide what to do with them as a second, separately-logged model call.
+  const searchCall = result.toolUses.find((t) => t.name === 'search_web');
+  const query = (searchCall?.input as { query?: string } | undefined)?.query;
+  if (searchCall && query) {
+    const found = await webSearch(db, query).catch((err) => {
+      console.error('web search failed', err instanceof Error ? err.message : err);
+      return null;
+    });
+    const searchNote = found
+      ? `\n\nSearch results for "${query}":\n${formatSearchResults(found)}`
+      : `\n\nYou searched for "${query}" but search is unavailable right now. Answer from what you already know and say plainly you could not look it up.`;
+    try {
+      result = await chatCompletion(db, system, userContent + searchNote, TOOLS_AFTER_SEARCH);
+    } catch (err) {
+      console.error('chatCompletion (post-search) failed', err instanceof Error ? err.message : err);
+      if (!quietFailures) await systemNote(db, convo.id, convo.office_id, `${self.name} could not respond just now.`);
+      return;
+    }
+    await logRun(result);
+  }
 
   if (!result.toolUses.length) {
     console.warn('no tool use returned', result.provider, result.model, result.stopReason);
