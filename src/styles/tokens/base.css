@@ -1,5 +1,6 @@
-*{box-sizing:border-box}
-body{margin:0;background:var(--surface-canvas);color:var(--text-body);font-family:var(--font-sans);font-size:var(--text-body-md);line-height:var(--leading-body-md);font-weight:var(--font-weight-400,400);-webkit-font-smoothing:antialiased}
+*,*::before,*::after{box-sizing:border-box}
+html{background:var(--surface-canvas);color-scheme:dark;-webkit-text-size-adjust:100%;scroll-behavior:smooth}
+body{margin:0;min-height:100vh;background:var(--surface-canvas);color:var(--text-body);font-family:var(--font-sans);font-size:var(--text-body-md);line-height:var(--leading-body-md);font-weight:var(--font-weight-regular);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility;overflow-x:hidden}
 h1,h2,h3{font-family:var(--font-display);font-weight:var(--font-weight-light);color:var(--text-primary);margin:0}
 h1{font-size:var(--text-display-sm);line-height:var(--leading-display-sm)}
 h2{font-size:var(--text-heading-lg);line-height:var(--leading-heading-lg)}
@@ -7,4 +8,15 @@ h3{font-size:var(--text-subheading);line-height:var(--leading-subheading);font-f
 p{margin:0}
 a{color:var(--color-ash);text-decoration:none;transition:var(--transition-state)}
 a:hover{color:var(--color-pure)}
+button,input,textarea,select{font:inherit;color:inherit}
+button{-webkit-tap-highlight-color:transparent}
+:focus{outline:none}
+:focus-visible{outline:1px solid var(--color-pure);outline-offset:2px}
 ::selection{background:var(--color-iris-gleam);color:var(--color-pure)}
+::placeholder{color:var(--color-fog);opacity:1}
+/* Quiet scrollbars: a hairline thumb that only shows when it is needed. */
+*{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,0.14) transparent}
+*::-webkit-scrollbar{width:10px;height:10px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:9999px;border:3px solid transparent;background-clip:padding-box}
+*::-webkit-scrollbar-thumb:hover{background-color:rgba(255,255,255,0.22)}

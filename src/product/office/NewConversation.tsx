@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { AgentAvatar, Button, DisplayHeadline, MonoLabel, Switch, TextField } from '@/ds';
+import { AgentAvatar, Button, Collapse, DisplayHeadline, Drawer, Icon, MonoLabel, Switch, TextField, type StyleVars } from '@/ds';
 import { supabase } from '@/lib/supabase';
 import { errorCopy } from '@/lib/errors';
 import { useOffice } from '@/lib/office';
 import { navigate } from '@/lib/router';
-import { Drawer, EmptyState, ErrorLine } from '../ui';
+import { EmptyState, ErrorLine } from '../ui';
 
 /** Pick agents: two makes a one-on-one, more makes a group. Include yourself or let them talk alone. */
 export function NewConversation({ onClose }: { onClose: () => void }) {
@@ -18,7 +18,7 @@ export function NewConversation({ onClose }: { onClose: () => void }) {
   const count = picked.length + (includeMe ? 1 : 0);
   const kind = count === 2 ? 'One-on-one' : count > 2 ? 'Group' : null;
 
-  const toggle = (id: string, on: boolean) => setPicked((prev) => (on ? [...prev, id] : prev.filter((x) => x !== id)));
+  const toggle = (id: string) => setPicked((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
   const create = async () => {
     setBusy(true);
@@ -34,31 +34,49 @@ export function NewConversation({ onClose }: { onClose: () => void }) {
   };
 
   return (
-    <Drawer onClose={onClose}>
-      <DisplayHeadline size="card" align="left" as="h2">New <em>conversation</em>.</DisplayHeadline>
-      <MonoLabel size="tiny" tone="var(--text-muted)">Two members makes a one-on-one. Three or more makes a group.</MonoLabel>
-      {agents.length === 0 ? <EmptyState fact="No agents in this office yet." action={<Button variant="text" href="#/app/agents/new" arrow>Create an agent</Button>} /> : null}
+    <Drawer onClose={onClose} eyebrow="New conversation" label="New conversation">
       <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-8)' }}>
-        {agents.map((a) => (
-          <label key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-12)', padding: 'var(--spacing-12) var(--spacing-16)', background: 'var(--surface-card)', borderRadius: 'var(--radius-cards)', cursor: 'pointer' }}>
-            <AgentAvatar name={a.name} tone={a.tone} size="sm" />
-            <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0 }}>
-              <span style={{ fontFamily: 'var(--font-sans)', fontSize: 'var(--text-body-sm)', color: 'var(--color-cloud)' }}>{a.name}</span>
-              <MonoLabel size="tiny" tone="var(--text-muted)">{`@${a.handle} · ${memberById(a.owner_id)?.profile?.display_name ?? 'Office'}`}</MonoLabel>
-            </div>
-            <Switch checked={picked.includes(a.id)} onChange={(on) => toggle(a.id, on)} aria-label={`Include ${a.name}`} />
-          </label>
-        ))}
+        <DisplayHeadline size="card" align="left" as="h2">Who is <em>talking</em>?</DisplayHeadline>
+        <p className="p-section__desc">Two members makes a one-on-one. Three or more makes a group.</p>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-12)' }}>
+      {agents.length === 0 ? (
+        <EmptyState fact="No agents in this office yet." action={<Button variant="text" href="#/app/agents/new" arrow style={{ paddingLeft: 0 }}>Create an agent</Button>} />
+      ) : (
+        <div className="p-picker" role="group" aria-label="Agents">
+          {agents.map((a, i) => {
+            const on = picked.includes(a.id);
+            return (
+              <button key={a.id} type="button" className="p-pick" aria-pressed={on} onClick={() => toggle(a.id)} style={{ '--tone': a.tone, '--i': i } as StyleVars}>
+                <AgentAvatar name={a.name} tone={a.tone} size="sm" />
+                <span style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, textAlign: 'left' }}>
+                  <span className="p-pick__name">{a.name}</span>
+                  <MonoLabel size="tiny" tone="var(--text-muted)">{`@${a.handle} · ${memberById(a.owner_id)?.profile?.display_name ?? 'Office'}`}</MonoLabel>
+                </span>
+                <span className="p-pick__check"><Icon name="check" size={14} tone="dark" strokeWidth={2.5} /></span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+      <label className="p-toggle-row">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
+          <span className="p-toggle-row__title">{includeMe ? 'Include me' : 'Agents only'}</span>
+          <MonoLabel size="tiny" tone="var(--text-muted)">{includeMe ? 'You are in this conversation' : 'You can still read it'}</MonoLabel>
+        </div>
         <Switch checked={includeMe} onChange={setIncludeMe} aria-label="Include me" />
-        <MonoLabel size="tiny">{includeMe ? 'You are in this conversation' : 'Agents only · you can still read it'}</MonoLabel>
-      </div>
-      {count > 2 ? <TextField label="Group name (optional)" value={title} onChange={setTitle} maxLength={60} placeholder="Sunday dinner" /> : null}
+      </label>
+      <Collapse open={count > 2}>
+        <TextField label="Group name (optional)" value={title} onChange={setTitle} maxLength={60} placeholder="Sunday dinner" />
+      </Collapse>
       <ErrorLine>{error}</ErrorLine>
-      <Button variant="primary" arrow onClick={create} disabled={busy || !kind} style={{ alignSelf: 'flex-start' }}>
-        {kind ? `Start ${kind.toLowerCase()}` : 'Pick members'}
-      </Button>
+      <div className="p-form-actions">
+        <MonoLabel key={kind ?? 'none'} size="tiny" tone={kind ? 'var(--color-cloud)' : 'var(--text-muted)'} className="c-enter">
+          {kind ? `${kind} · ${count} members` : 'Pick at least one agent'}
+        </MonoLabel>
+        <Button variant="primary" arrow onClick={create} loading={busy} disabled={!kind} style={{ marginLeft: 'auto' }}>
+          {kind ? `Start ${kind.toLowerCase()}` : 'Start'}
+        </Button>
+      </div>
     </Drawer>
   );
 }

@@ -6,7 +6,8 @@
   --spacing-120:120px; --spacing-140:140px;
 
   --page-max-width:1200px;
-  --section-gap:80px;
+  --section-gap:clamp(80px,10vw,140px);
+  --gutter:clamp(16px,4vw,32px);
   --card-padding:32px;
   --element-gap:12px;
   --showcase-padding:90px;

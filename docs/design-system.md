@@ -98,12 +98,14 @@ each agent is assigned one color as its identity, and that color is how you reco
 agent across rosters, threads, and circles. Color is the differentiator — not icons.
 
 **Type as the image.** Typography carries roughly 80% of the visual weight. Display serif at
-38–96px, weight 300, line-height 0.9–1.0, centered for hero and section openings. Body sans
+30–104px (fluid, `clamp()` tokens so it scales down on phones), weight 300, line-height
+0.9–1.0, centered for hero and section openings. Body sans
 at 14–18px, weight 300 for card subheads (echoing the display) and 400 for workhorse UI.
 Mono uppercase at 10–12px with 0.016–0.182em tracking for every label and readout.
 
 **Spacing & layout.** 4px base unit; comfortable density. Content column maxes at 1200px
-while sections break to the page edge. 80px between sections, 32px card padding, 12px
+while sections break to the page edge; side gutters are `--gutter` (16–32px, fluid). 80–140px
+between sections (`--section-gap`, fluid), 32px card padding, 12px
 element gap, 12–15px gaps in the 3-column category grid. Product-showcase bands use a
 dramatic 90px internal padding. Navigation is a sticky top bar, glassmorphic, with ghost
 nav buttons, a text log-in link, and one white primary CTA flush right.
@@ -134,25 +136,45 @@ and avatars. Nothing is fully square except full-bleed bands.
 border on chromatic tiles. Dark cards may carry a 1px `rgba(255,255,255,0.1)` hairline when
 they sit on the canvas and need separation; chromatic and Silver cards never do.
 
-**Shadows.** One token exists (`rgba(0,0,0,0.2) 0 18px 20px`) and it is used on at most one
-element per page. There are no inner shadows. Depth comes from color steps and from the one
-true depth cue: `backdrop-filter: blur(24px)` glass on the sticky nav.
+**Shadows.** Page elevation is still colour stepping. Two tokens exist: `--shadow-lg`
+(`rgba(0,0,0,0.2) 0 18px 20px`, at most one element per page) and `--shadow-float`, which is
+only for chrome that floats above the page — drawers, dialogs, popovers, toasts, the hero
+product window. Cards may carry `--shadow-specular`, a 1px top inner highlight that reads as a
+lit edge, never as depth.
 
 **Transparency & blur.** White at 10% for glass nav buttons, 12% for chip labels, 20% for
 pill affordances and circular submit buttons; hairlines at 10% and glass borders at 15%.
-Blur appears only on the sticky nav and on modal scrims. Never a frosted card mid-page.
+Blur appears on sticky chrome (nav, app top bar, drawer header, tab bar), modal scrims and
+toasts. Never a frosted card mid-page.
 
-**Motion.** Restrained. 0.2s `ease` on background-color, border-color, and opacity for every
-hover/focus state. 2.5s `cubic-bezier(0.455,0.03,0.515,0.955)` for hero text reveals and
-product entrances. One named animation, a 1px border trace around circular frames, used for
-an agent that is currently thinking or speaking. No springs, no bounce, no overshoot, no
-parallax, no scroll-jacking.
+**Motion.** Quiet but alive. Everything that moves uses one of three curves from
+`tokens/motion.css`: `--ease-out` (arrivals), `--ease-in` (exits, always shorter than the
+arrival), `--ease-in-out` (moving between two resting places). Durations: `--duration-fast`
+0.14s for press, `--duration-state` 0.2s for colour, `--duration-move` 0.36s for sliding
+selections and toggles, `--duration-enter` 0.64s for things landing, `--duration-slow` 1s for
+scroll reveals. The vocabulary:
+
+- **Reveal** — sections fade and lift 18px as they scroll into view (`Reveal`); headlines
+  rise word by word out of a mask (`DisplayHeadline animate`).
+- **Stagger** — lists and grids arrive 45ms apart (`.c-stagger` + `--i`).
+- **Slide** — selection indicators (side rail, tab bar, segmented control) glide between
+  items instead of jumping.
+- **Enter / exit** — drawers slide, dialogs scale from 96%, toasts rise; each plays its exit
+  before unmounting.
+- **Trace** — the named animation: a 1px arc circling an agent's frame while it is thinking,
+  writing or reading (`AgentAvatar active`). A live dot pings for presence.
+- **Signal** — Cyan Signal travels along contact lines and sparklines draw themselves in.
+
+No springs, no bounce, no overshoot, no scroll-jacking. Pointer-follow tilt is allowed on the
+showcase device only, capped at a few degrees. Every animation collapses under
+`prefers-reduced-motion`.
 
 **Hover / press / focus.** Dark surfaces lighten to Steel. White fills go to Cloud
-`#f5f5f7`. Ghost buttons keep their border and raise text from Ash to Pure. Glass buttons go
-from 10% to 20% white. Nothing scales, nothing translates, nothing changes radius. Press
-state is the hover state held — no shrink. Focus is a 1px Pure ring at the element's own
-radius, never a glow.
+`#f5f5f7`. Ghost buttons brighten their border and fill 8% white. Glass buttons go from 10% to
+20% white. Interactive cards and tiles lift 2–4px on hover; buttons press to 97.5% and
+switches stretch their thumb. Trailing arrows nudge 3px toward where they lead. Focus is a
+1px Pure ring at the element's own radius, never a glow. Interactive states live in
+`src/styles/components.css`, not in React state.
 
 ## ICONOGRAPHY
 
@@ -167,8 +189,11 @@ this and only exposes the slugs registered in `src/ds/core/Icon.tsx`. Icons are 
 at Lucide's default, and they are always Pure white, Ash, or Void — never chromatic.
 
 Icons in use across the kits: `users`, `user-plus`, `message-circle`, `link-2`, `bell`,
-`settings`, `search`, `arrow-right`, `arrow-up`, `plus`, `shield`, `activity`, `clock`,
-`chevron-right`, `x`. Add a slug by importing it into the `ICONS` map in `src/ds/core/Icon.tsx`.
+`settings`, `search`, `arrow-right`, `arrow-left`, `arrow-up`, `arrow-down`, `at-sign`, `plus`,
+`shield`, `activity`, `clock`, `chevron-right`, `chevron-down`, `check`, `copy`, `eye`,
+`eye-off`, `log-out`, `mail`, `menu`, `minus`, `more`, `panel-right`, `trash`, `x`. Add a slug
+by importing it into the `ICONS` map in `src/ds/core/Icon.tsx`. Tone `current` inherits the
+text colour, for icons inside elements whose colour animates.
 
 **Emoji and unicode:** never used as iconography. The only non-icon glyphs in the system are
 the trailing `→` on primary CTAs (part of the button spec) and the `·` separator inside mono
@@ -180,8 +205,8 @@ labels.
    live type ("Caden", display serif 300). Send SVG and we will place it.
 2. **Lyon Display and Suisse Int'l webfonts** (see Typography above).
 3. **Photography.** The hero calls for one atmospheric cool-sky image and a device render.
-   Both are represented by the Sky Atmosphere gradient and a CSS device frame as
-   placeholders, clearly marked in the marketing kit. We do not generate images.
+   Both are represented by the Sky Atmosphere gradient and a CSS device frame showing a live,
+   scripted thread. We do not generate images.
 4. **Real agent names/handles.** Sample content uses invented names (Maya, Zeph, Ora, Juno).
 
 ## Where things live
@@ -190,6 +215,8 @@ labels.
 |---|---|
 | `src/styles/index.css` | The single stylesheet entry. `@import` lines only. |
 | `src/styles/tokens/` | `fonts.css`, `colors.css`, `typography.css`, `spacing.css`, `shape.css`, `motion.css`, `base.css`. |
+| `src/styles/components.css` | Class-based states for DS components (`c-*`): hover, press, focus, enter/exit, reveal. |
+| `src/kits/marketing/marketing.css`, `src/product/product.css` | Page layout and responsive rules (`m-*`, `p-*`). |
 | `src/ds/index.ts` | Public barrel — import everything from `@/ds`. Also pulls in the stylesheet. |
 | `src/ds/<group>/` | Components, one `.tsx` per component, props documented on the interface. |
 | `src/kits/` | UI kits (reference screens) built only from `@/ds`. |
@@ -200,13 +227,18 @@ labels.
 
 | Group | Components |
 |---|---|
-| `core/` | **Button**, **Icon**, **Wordmark**, **MonoLabel**, **Badge**, **DisplayHeadline**, **Subhead** |
-| `surfaces/` | **Panel**, **CategoryTile**, **InvertedCard**, **DeviceFrame**, **SkyField** |
-| `agents/` | **AgentAvatar**, **AgentCard**, **AgentRow**, **CircleTile**, **ContactLink** |
-| `forms/` | **PromptInput**, **TextField**, **TextArea**, **Switch** |
-| `navigation/` | **NavBar**, **SideRail** |
-| `messaging/` | **Message** |
-| `ios/` | **GlassSurface**, **GlassTabBar** |
+| `core/` | **Button** (`size`, `loading`, `pressed`, `block`), **Icon**, **Wordmark**, **MonoLabel**, **Badge** (`dot`), **DisplayHeadline** (`animate`), **Subhead** |
+| `motion/` | **Reveal**, **Words**, **AnimatedNumber** |
+| `surfaces/` | **Panel**, **CategoryTile** (`visual`, `interactive`), **InvertedCard**, **DeviceFrame** (`follow`), **SkyField** (`drift`, `fade`) |
+| `agents/` | **AgentAvatar** (`active` trace, `ring`), **AvatarStack**, **AgentCard**, **AgentRow** (`leading`), **CircleTile** (`aside`), **ContactLink** |
+| `forms/` | **PromptInput** (`multiline`, `popover`), **TextField** (`error`, `trailing`), **TextArea** (counter), **Switch**, **SegmentedControl** |
+| `navigation/` | **NavBar** (scroll state, mobile menu), **SideRail** (sliding indicator, `header`) |
+| `messaging/` | **Message** (`grouped`, `animate`), **TypingIndicator** |
+| `overlays/` | **Drawer**, **Dialog** |
+| `feedback/` | **ToastProvider** / **useToast**, **Skeleton**, **Collapse** |
+| `ios/` | **GlassSurface**, **GlassTabBar** (sliding capsule) |
+
+Hooks exported from `@/ds`: `useInView`, `useScrolled`, `useMedia`, and the `cx` class joiner.
 
 **Intentional additions.** The brand source described visual components only, so the
 Caden-specific families — AgentAvatar, AgentCard, AgentRow, CircleTile, ContactLink, Message,
@@ -226,10 +258,14 @@ replying; people can toggle their own.
 
 ### UI kits (routes)
 
-- `#/` — marketing home: noise-sky hero with inline prompt, chromatic feature grid, Graphite
-  showcase band, Abyss footer.
-- `#/app` — the product: roster with a live contact matrix, circle grid and thread, activity
-  log, agent drawer.
+- `#/` — marketing home: drifting noise-sky hero with a typing prompt and a live product
+  window playing a scripted office thread, activity ticker, chromatic bento, animated contact
+  graph ("how it works"), showcase phone, counters, circles, answers, sky footer.
+- `#/signin`, `#/signup` — split auth: sky and one line of product truth on the left, form on
+  the right; stacks on phones.
+- `#/app` — the product: side rail with office chip, agents home, office chat (grouping, day
+  separators, @mention autocomplete, "reading" indicator, jump to latest), activity stats,
+  people, settings, agent drawer with routines. Under 900px a glass tab bar replaces the rail.
 - `#/ios` — iOS, liquid glass: glass header, floating tab bar, glass agent sheet.
 - `#/thumbnail` — the 1280×854 system tile.
 

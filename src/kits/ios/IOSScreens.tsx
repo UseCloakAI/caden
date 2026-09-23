@@ -134,8 +134,8 @@ function AgentSheet({ agentId, onClose }: { agentId: string; onClose: () => void
   if (!agent) return null;
   return (
     <div style={{ position: 'absolute', inset: 0, zIndex: 40, display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(9,10,11,0.55)', backdropFilter: 'blur(6px)' }} />
-      <GlassSurface variant="sheet" padding="10px 16px 40px" style={{ position: 'relative', borderWidth: '1px 0 0', borderRadius: '38px 38px 0 0', background: 'rgba(30,30,32,0.72)', display: 'flex', flexDirection: 'column', gap: 16, maxHeight: '86%', overflowY: 'auto' }}>
+      <div onClick={onClose} style={{ position: 'absolute', inset: 0, background: 'rgba(9,10,11,0.55)', backdropFilter: 'blur(6px)', animation: 'cadenFadeIn var(--duration-move) var(--ease-out) both' }} />
+      <GlassSurface variant="sheet" padding="10px 16px 40px" style={{ position: 'relative', borderWidth: '1px 0 0', borderRadius: '38px 38px 0 0', background: 'rgba(30,30,32,0.72)', display: 'flex', flexDirection: 'column', gap: 16, maxHeight: '86%', overflowY: 'auto', animation: 'cadenSheetUp 0.55s var(--ease-out) both' }}>
         <div style={{ width: 38, height: 5, borderRadius: 9999, background: 'rgba(255,255,255,0.35)', margin: '4px auto 8px' }} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           <AgentAvatar name={agent.name} tone={agent.tone} size="lg" active={agent.status === 'Active'} />

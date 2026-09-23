@@ -58,9 +58,11 @@ Full rules — voice, colour discipline, type, spacing, motion, glass — live i
 
 ```
 src/
-  styles/        index.css + tokens/*.css
-  ds/            components by group, index.ts barrel
-  kits/          marketing, app, ios reference screens + sample data
+  styles/        index.css + tokens/*.css + components.css (interactive states, motion)
+  ds/            components by group (core, motion, surfaces, agents, forms, navigation,
+                 messaging, overlays, feedback, ios), index.ts barrel
+  kits/          marketing home, app, ios reference screens + sample data
+  product/       the signed-in app on Supabase (routes load on demand)
 docs/            design-system.md
 SKILL.md         Agent Skill wrapper for AI tools working in this repo
 ```

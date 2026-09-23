@@ -123,6 +123,8 @@ export function useThread(conversationId: string | undefined) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [reactions, setReactions] = useState<Reaction[]>([]);
   const [loading, setLoading] = useState(true);
+  /** Messages that arrived over realtime while the thread was open, so they can animate in. */
+  const [live, setLive] = useState<ReadonlySet<string>>(() => new Set());
   const ids = useRef(new Set<string>());
 
   useEffect(() => {
@@ -153,6 +155,7 @@ export function useThread(conversationId: string | undefined) {
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${conversationId}` }, (payload) => {
         const msg = payload.new as Message;
         ids.current.add(msg.id);
+        setLive((prev) => new Set(prev).add(msg.id));
         setMessages((prev) => (prev.some((m) => m.id === msg.id) ? prev : [...prev, msg]));
       })
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'message_reactions' }, (payload) => {
@@ -178,7 +181,7 @@ export function useThread(conversationId: string | undefined) {
       return change.add && !next.some((x) => x.id === change.add!.id) ? [...next, change.add] : next;
     });
 
-  return { messages, reactions, loading, applyLocal };
+  return { messages, reactions, loading, live, applyLocal };
 }
 
 /** "4m", "3h", "Yesterday", "Sep 12" — the mono timestamp voice. */

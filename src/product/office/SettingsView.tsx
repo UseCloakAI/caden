@@ -1,11 +1,13 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Button, MonoLabel, Panel, TextField } from '@/ds';
+import { AnimatedNumber, Button, Dialog, MonoLabel, TextField, useToast } from '@/ds';
 import { supabase, callFunction } from '@/lib/supabase';
 import { errorCopy } from '@/lib/errors';
 import { useAuth } from '@/lib/auth';
 import { useOffice } from '@/lib/office';
 import { navigate } from '@/lib/router';
-import { ErrorLine, PageHeader, TonePicker } from '../ui';
+import { ErrorLine, PageHeader, Section, TonePicker } from '../ui';
+
+const DAILY_TOKENS = 200_000;
 
 interface KeyStats {
   healthy: number;
@@ -15,12 +17,15 @@ interface KeyStats {
 export function SettingsView() {
   const { session, profile, refreshProfile, signOut } = useAuth();
   const { office, role, reload } = useOffice();
+  const toast = useToast();
   const [name, setName] = useState(profile?.display_name ?? '');
   const [officeName, setOfficeName] = useState(office?.name ?? '');
   const [officeNote, setOfficeNote] = useState(office?.note ?? '');
   const [officeTone, setOfficeTone] = useState(office?.tone ?? 'var(--color-horizon)');
   const [usage, setUsage] = useState<number | null>(null);
-  const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState<'profile' | 'office' | null>(null);
+  const [leaving, setLeaving] = useState(false);
   const [keyStats, setKeyStats] = useState<KeyStats | null>(null);
   const [donateKey, setDonateKey] = useState('');
   const [donateBusy, setDonateBusy] = useState(false);
@@ -44,6 +49,7 @@ export function SettingsView() {
     else {
       setDonateKey('');
       setDonateStatus('Added. Thanks — it now helps power replies for the whole platform.');
+      toast('Key donated. Thanks for helping power the pool.');
       loadKeyStats();
     }
   };
@@ -60,83 +66,105 @@ export function SettingsView() {
 
   const saveProfile = async (e: FormEvent) => {
     e.preventDefault();
-    const { error } = await supabase.from('profiles').update({ display_name: name.trim() }).eq('id', profile!.id);
-    setStatus(error ? errorCopy(error) : 'Saved.');
+    setSaving('profile');
+    setError(null);
+    const { error: err } = await supabase.from('profiles').update({ display_name: name.trim() }).eq('id', profile!.id);
+    setSaving(null);
+    if (err) setError(errorCopy(err));
+    else toast('Profile saved.');
     await refreshProfile();
     await reload();
   };
 
   const saveOffice = async (e: FormEvent) => {
     e.preventDefault();
-    const { error } = await supabase.from('offices').update({ name: officeName.trim(), note: officeNote.trim() || null, tone: officeTone }).eq('id', office!.id);
-    setStatus(error ? errorCopy(error) : 'Office saved.');
+    setSaving('office');
+    setError(null);
+    const { error: err } = await supabase.from('offices').update({ name: officeName.trim(), note: officeNote.trim() || null, tone: officeTone }).eq('id', office!.id);
+    setSaving(null);
+    if (err) setError(errorCopy(err));
+    else toast('Office saved.');
     await reload();
   };
 
   const leave = async () => {
-    if (!window.confirm(`Leave ${office?.name}? Your agents leave with you.`)) return;
-    const { error } = await supabase.rpc('leave_office');
-    if (error) setStatus(errorCopy(error));
+    const { error: err } = await supabase.rpc('leave_office');
+    if (err) setError(errorCopy(err));
     else {
       await reload();
       navigate('/app');
     }
   };
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-32)', maxWidth: 720 }}>
-      <PageHeader eyebrow="Settings" title={<>Your <em>account</em>.</>} />
-      <ErrorLine>{status}</ErrorLine>
+  const profileDirty = name.trim() !== (profile?.display_name ?? '');
+  const officeDirty = officeName.trim() !== (office?.name ?? '') || (officeNote.trim() || null) !== (office?.note ?? null) || officeTone !== office?.tone;
+  const share = usage == null ? 0 : Math.min(1, usage / DAILY_TOKENS);
 
-      <Panel level="card" padding="var(--spacing-24)">
-        <form onSubmit={saveProfile} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-16)' }}>
-          <MonoLabel size="micro" tone="var(--text-body)">You</MonoLabel>
+  return (
+    <div className="p-stack p-narrow-page">
+      <PageHeader eyebrow="Settings" title={<>Your <em>account</em>.</>} />
+      <ErrorLine>{error}</ErrorLine>
+
+      <Section title="You" description={`${profile?.email ?? ''} · ${session?.user.email_confirmed_at ? 'Verified' : 'Not verified'}`}>
+        <form onSubmit={saveProfile} className="p-form">
           <TextField label="Display name" value={name} onChange={setName} maxLength={60} />
-          <MonoLabel size="tiny" tone="var(--text-muted)">{`${profile?.email ?? ''} · ${session?.user.email_confirmed_at ? 'Verified' : 'Not verified'}`}</MonoLabel>
-          <Button variant="primary" type="submit" style={{ alignSelf: 'flex-start' }}>Save</Button>
+          <Button variant="primary" type="submit" loading={saving === 'profile'} disabled={!profileDirty || !name.trim()} style={{ alignSelf: 'flex-start' }}>Save</Button>
         </form>
-      </Panel>
+      </Section>
 
       {role === 'owner' ? (
-        <Panel level="card" padding="var(--spacing-24)">
-          <form onSubmit={saveOffice} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-16)' }}>
-            <MonoLabel size="micro" tone="var(--text-body)">Office</MonoLabel>
+        <Section title="Office" description="Only the owner sees this. The colour fills the office tile everyone sees.">
+          <form onSubmit={saveOffice} className="p-form">
+            <div className="p-office-preview" style={{ background: officeTone }}>
+              <MonoLabel size="tiny" tone="currentColor" style={{ opacity: 0.75 }}>Preview</MonoLabel>
+              <span className="p-office-preview__name">{officeName || 'Office name'}</span>
+            </div>
             <TextField label="Name" value={officeName} onChange={setOfficeName} maxLength={60} required />
             <TextField label="Note" value={officeNote} onChange={setOfficeNote} maxLength={140} placeholder="Four people, three agents, one calendar." />
             <TonePicker value={officeTone} onChange={setOfficeTone} />
-            <Button variant="primary" type="submit" style={{ alignSelf: 'flex-start' }}>Save office</Button>
+            <Button variant="primary" type="submit" loading={saving === 'office'} disabled={!officeDirty || !officeName.trim()} style={{ alignSelf: 'flex-start' }}>Save office</Button>
           </form>
-        </Panel>
+        </Section>
       ) : null}
 
-      <Panel level="card" padding="var(--spacing-24)" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-12)' }}>
-        <MonoLabel size="micro" tone="var(--text-body)">Usage · last 24 hours</MonoLabel>
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--text-mono-label)', color: 'var(--color-cloud)' }}>
-          {usage == null ? '—' : `${usage.toLocaleString()} / 200,000 TOKENS`}
-        </span>
-      </Panel>
+      <Section title="Usage · last 24 hours" description="Tokens your agents used across every conversation and routine.">
+        <div className="p-usage">
+          <span className="p-usage__value">
+            {usage == null ? '—' : <AnimatedNumber value={usage} />}
+            <MonoLabel size="tiny" tone="var(--text-muted)">{` / ${DAILY_TOKENS.toLocaleString()} tokens`}</MonoLabel>
+          </span>
+          <span className="p-meter-bar" role="meter" aria-valuemin={0} aria-valuemax={DAILY_TOKENS} aria-valuenow={usage ?? 0} aria-label="Tokens used today">
+            <span style={{ transform: `scaleX(${share})` }} />
+          </span>
+        </div>
+      </Section>
 
-      <Panel level="card" padding="var(--spacing-24)" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--spacing-16)' }}>
-        <MonoLabel size="micro" tone="var(--text-body)">Community keys</MonoLabel>
-        <p style={{ margin: 0, fontFamily: 'var(--font-sans)', fontSize: 'var(--text-body-sm)', lineHeight: 'var(--leading-body-sm)', color: 'var(--text-body)' }}>
-          Agents reply using a shared, free-tier Groq key pool before falling back to Claude. Donate your own free
-          Groq key (from console.groq.com) and it joins the pool for everyone — used to power other people's agents
-          too, never shown again once saved.
-        </p>
+      <Section
+        title="Community keys"
+        description="Agents reply using a shared, free-tier Groq key pool before falling back to Claude. Donate your own free Groq key (from console.groq.com) and it joins the pool for everyone — used to power other people's agents too, never shown again once saved."
+      >
         <MonoLabel size="tiny" tone="var(--text-muted)">
           {keyStats ? `${keyStats.healthy} keys ready · ${keyStats.cooling_down} resting` : 'Checking pool…'}
         </MonoLabel>
-        <form onSubmit={donate} style={{ display: 'flex', gap: 'var(--spacing-12)', flexWrap: 'wrap' }}>
+        <form onSubmit={donate} className="p-form" style={{ flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <TextField label="Groq API key" type="password" value={donateKey} onChange={setDonateKey} placeholder="gsk_…" required style={{ flex: 1, minWidth: 220 }} />
-          <Button variant="ghost" type="submit" disabled={donateBusy || !donateKey.trim()} style={{ alignSelf: 'flex-end' }}>Donate key</Button>
+          <Button variant="ghost" type="submit" loading={donateBusy} disabled={!donateKey.trim()}>Donate key</Button>
         </form>
         <ErrorLine>{donateStatus}</ErrorLine>
-      </Panel>
+      </Section>
 
-      <div style={{ display: 'flex', gap: 'var(--spacing-12)' }}>
-        <Button variant="ghost" onClick={leave}>Leave office</Button>
-        <Button variant="text" onClick={() => signOut()}>Sign out</Button>
-      </div>
+      <Section title="Leave or sign out" description={`Leaving ${office?.name ?? 'the office'} takes your agents with you. You can join another office afterwards.`}>
+        <div style={{ display: 'flex', gap: 'var(--spacing-12)', flexWrap: 'wrap' }}>
+          <Button variant="ghost" onClick={() => setLeaving(true)}>Leave office</Button>
+          <Button variant="text" icon="log-out" onClick={() => signOut()}>Sign out</Button>
+        </div>
+      </Section>
+
+      {leaving ? (
+        <Dialog onClose={() => setLeaving(false)} title={`Leave ${office?.name}?`} confirmLabel="Leave office" onConfirm={leave}>
+          Your agents leave with you, and you lose access to this office's conversations.
+        </Dialog>
+      ) : null}
     </div>
   );
 }
