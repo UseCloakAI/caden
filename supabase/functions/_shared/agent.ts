@@ -10,6 +10,10 @@ const HISTORY_WINDOW = 12;
 const COMPACT_THRESHOLD = 24;
 const MEMORY_COMPACT_AT = 4000;
 const BUCKET = 'agent-files';
+/** How many times a single turn can search before it's forced to act on what it has — a task
+ *  can take a few steps, but not loop forever; each round is its own model call and, for a
+ *  real search, its own Tavily credit. */
+const MAX_SEARCH_ROUNDS = 3;
 
 export interface Agent {
   id: string;
@@ -289,7 +293,7 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: 'search_web',
     description:
-      'Search the web for something outside what you already know — a current price, hours, news, a fact your training would not have. Call it alone: you will see the results and choose your next action afterward, so do not also reply or post in the same call.',
+      'Search the web for something outside what you already know — a current price, hours, news, a fact your training would not have. Call it alone: you will see the results and can search again with a refined query if the first pass was not enough, or act on what you have. Do not also reply or post in the same call; stop searching once you have enough to act.',
     input_schema: { type: 'object', properties: { query: { type: 'string', description: 'A short, specific search query.' } }, required: ['query'], additionalProperties: false },
   },
   {
@@ -382,7 +386,8 @@ How you act: you only act through your tools. Every turn, first read the convers
 - message_agents: talk with specific agents away from this conversation. One handle opens a one-on-one; several open a group. Call it more than once to run separate one-on-ones in parallel.
 - post_to_office: something everyone in the office should see.
 - remember: save a durable fact for your own future turns.
-- search_web: look something up you do not already know. Call it by itself; you will see the results and act next.
+- search_web: look something up you do not already know. Call it by itself; you will see the results and can search again or act next.
+A task can take a few steps: search, look at what came back, search again if it was not enough, then reply or post once you actually have the answer. Do not act on a half-finished search, and do not keep searching past what you need.
 React alone when a reply would add nothing, for example a plain update, an agreement or thanks. Reply when you have something to add or were asked something. Stay quiet when the message is not meant for you or others have it covered.
 Coordinate with other agents when a task involves what they look after, then report back where you were asked. Do not repeat what others already said or invent facts about people's plans; ask the agent or person who would know, or search_web if it's something the web would know instead.`;
 
@@ -425,21 +430,30 @@ ${task}`;
   await logRun(result);
 
   // A search doesn't end the turn — the model asked to look something up, so give it the
-  // results and let it decide what to do with them as a second, separately-logged model call.
-  const searchCall = result.toolUses.find((t) => t.name === 'search_web');
-  const query = (searchCall?.input as { query?: string } | undefined)?.query;
-  if (searchCall && query) {
+  // results and let it decide what to do next as a fresh, separately-logged model call. That
+  // next call can search again with a better query, so a task can take a few steps ("search,
+  // that wasn't specific enough, search again, now reply") rather than being stuck with
+  // whatever the first query turned up. Bounded so one turn can't loop indefinitely.
+  let context = userContent;
+  for (let round = 1; round <= MAX_SEARCH_ROUNDS; round++) {
+    const searchCall = result.toolUses.find((t) => t.name === 'search_web');
+    const query = (searchCall?.input as { query?: string } | undefined)?.query;
+    if (!searchCall || !query) break; // it has what it needs, or never asked to search
+
     const found = await webSearch(db, query).catch((err) => {
       console.error('web search failed', err instanceof Error ? err.message : err);
       return null;
     });
-    const searchNote = found
+    context += found
       ? `\n\nSearch results for "${query}":\n${formatSearchResults(found)}`
       : `\n\nYou searched for "${query}" but search is unavailable right now. Answer from what you already know and say plainly you could not look it up.`;
+
+    // The last allowed round can't search again, so the model is forced to act on what it has.
+    const toolsThisRound = round === MAX_SEARCH_ROUNDS ? TOOLS_AFTER_SEARCH : TOOLS;
     try {
-      result = await chatCompletion(db, system, userContent + searchNote, TOOLS_AFTER_SEARCH);
+      result = await chatCompletion(db, system, context, toolsThisRound);
     } catch (err) {
-      console.error('chatCompletion (post-search) failed', err instanceof Error ? err.message : err);
+      console.error('chatCompletion (search loop) failed', err instanceof Error ? err.message : err);
       if (!quietFailures) await systemNote(db, convo.id, convo.office_id, `${self.name} could not respond just now.`);
       return;
     }
