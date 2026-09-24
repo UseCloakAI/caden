@@ -322,13 +322,14 @@ function formatSearchResults(found: SearchResult): string {
 }
 
 /** Model calls per turn: the first does react + act together; at most two follow-ups. */
-const MAX_STEPS = 3;
+const MAX_STEPS = 4;
 /** The beat between a reaction showing and the words that follow it. */
 const REACT_BEAT_MS = 800;
 
 const FIRST_STEP = `Call react exactly once for the latest message, and in the same response call whatever else you will do this turn:
 - seen: read it, nothing to add. on_it: you are acting on it. agree / disagree: you have a view. thanks / done: where they fit.
 - Then reply, message other agents, post somewhere, remember — or call done if the reaction says enough.
+- If you need to look something up, call search_web now and nothing else to say yet; you answer once the results are back.
 At most one message per conversation this turn.`;
 
 async function post(db: SupabaseClient, conversationId: string, self: Agent, body: string, hop: number) {
@@ -340,6 +341,16 @@ async function post(db: SupabaseClient, conversationId: string, self: Agent, bod
 
 async function systemNote(db: SupabaseClient, conversationId: string, officeId: string, body: string) {
   await db.from('messages').insert({ conversation_id: conversationId, office_id: officeId, kind: 'system', body });
+}
+
+type ActivityState = 'idle' | 'reading' | 'thinking' | 'searching' | 'messaging' | 'writing';
+
+/** What the agent is doing right now, shown live in the thread it was woken in. Never blocks the turn. */
+async function setActivity(db: SupabaseClient, self: Agent, conversationId: string | null, state: ActivityState, detail: string | null = null) {
+  const { error } = await db
+    .from('agent_activity')
+    .upsert({ agent_id: self.id, office_id: self.office_id, conversation_id: conversationId, state, detail: detail?.slice(0, 120) ?? null, updated_at: new Date().toISOString() });
+  if (error) console.error('activity update failed', error.message);
 }
 
 async function allowed(db: SupabaseClient, subject: string, action: string) {
@@ -359,7 +370,7 @@ async function allowed(db: SupabaseClient, subject: string, action: string) {
  */
 async function tokenBudget(db: SupabaseClient, ownerId: string): Promise<{ groq: number; claude: number }> {
   const [{ data: ctx }, { data: runs }] = await Promise.all([
-    db.rpc('usage_context').maybeSingle(),
+    db.rpc('usage_context').maybeSingle<{ reset_at: string | null; groq_max: number | null; claude_max: number | null }>(),
     db.from('agent_runs').select('input_tokens, output_tokens, provider, created_at').eq('owner_id', ownerId).gte('created_at', new Date(Date.now() - 86400_000).toISOString()),
   ]);
   const resetAt = ctx?.reset_at ? Date.parse(ctx.reset_at) : 0;
@@ -457,6 +468,9 @@ How you act: like a person in a group chat, not a bot. You only act through your
 - When a person is waiting on you somewhere else, answer them there.
 - When someone asks you to do something with another agent, do it, then tell the person who asked what you did.
 - Don't @mention people; talk to them by name. Only @mention an agent when you need that agent to answer.
+- Writing an agent's name or @handle in a reply does NOT reach them. To tell another agent something, call message_agents.
+- Never claim you did something you have not done with a tool this turn. Never invent listings, prices, or results; search_web first.
+- You cannot work between turns. Never say "I'll look into it" or "I'll report back": do it now with your tools and answer with what you found, or say plainly what you can't do.
 Do not invent facts about people's plans; ask the agent or person who would know.`;
 
   const task =
@@ -492,6 +506,14 @@ ${task}`;
     return true;
   };
 
+  await setActivity(db, self, convo.id, 'reading');
+  try {
+    await playTurn();
+  } finally {
+    await setActivity(db, self, convo.id, 'idle');
+  }
+
+  async function playTurn() {
   for (let step = 0; step < MAX_STEPS; step++) {
     const repliedHere = postedTo.has(convo.id);
     let tools: Anthropic.Tool[];
@@ -517,6 +539,7 @@ ${task}`;
     const doneSoFar = actions.length ? `\n\nWhat you have done so far this turn:\n${actions.map((a) => `- ${a}`).join('\n')}` : '';
     let result: ChatResult;
     try {
+      await setActivity(db, self, convo.id, 'thinking');
       result = await chatCompletion(db, system, `${context}${doneSoFar}\n\n${instruction}`, tools, self.chip_id);
       await logRun(db, self, convo, trigger, result);
       // Only touch the row when something changed; every agents update re-syncs open offices.
@@ -545,11 +568,29 @@ ${task}`;
 
     onlyReacted = step === 0 && !!incoming && result.toolUses.every((t) => t.name === 'react');
     pendingSearch = result.toolUses.some((t) => t.name === 'search_web');
-    for (const toolUse of result.toolUses) {
+    // Searching and talking in one breath means the words are an announcement ("let me look").
+    // Hold them: the search runs first, and the next step answers with what it found.
+    const uses = pendingSearch ? result.toolUses.filter((t) => !['reply', 'post_to_office', 'post_in'].includes(t.name)) : result.toolUses;
+    // Search before anything else so what gets sent can use the results.
+    uses.sort((a, b) => Number(b.name === 'search_web') - Number(a.name === 'search_web'));
+    for (const toolUse of uses) {
       const input = toolUse.input as { body?: string; handles?: string[]; fact?: string; conversation?: number; query?: string };
       switch (toolUse.name) {
         case 'reply':
-          if (await say(convo.id, input.body)) actions.push(`replied here: "${input.body!.slice(0, 140)}"`);
+          await setActivity(db, self, convo.id, 'writing');
+          if (await say(convo.id, input.body)) {
+            actions.push(`replied here: "${input.body!.slice(0, 140)}"`);
+            // "@nova tell her…" in a one-on-one never reaches Nova. Deliver it for real.
+            const outside = mentionedAgents(input.body!, office.agents).filter((a) => a.id !== self.id && !convo.participants.some((p) => p.agent_id === a.id));
+            if (outside.length && convo.kind !== 'office') {
+              await setActivity(db, self, convo.id, 'messaging', outside.map((a) => a.name).join(', '));
+              const sent = await messageAgents(db, self, convo, office, outside.map((a) => a.handle), input.body, hop, postedTo);
+              if (sent) {
+                actions.push(`messaged ${sent}: "${input.body!.slice(0, 140)}"`);
+                delegated = true;
+              }
+            }
+          }
           break;
         case 'post_to_office': {
           const officeThread = office.conversations.find((c) => c.kind === 'office');
@@ -565,6 +606,7 @@ ${task}`;
           break;
         }
         case 'message_agents': {
+          await setActivity(db, self, convo.id, 'messaging', (input.handles ?? []).map((h) => office.agents.find((a) => a.handle === String(h).replace(/^@/, '').toLowerCase())?.name ?? h).join(', '));
           const sent = await messageAgents(db, self, convo, office, input.handles, input.body, hop, postedTo);
           if (sent) {
             actions.push(`messaged ${sent}: "${(input.body ?? '').slice(0, 140)}"`);
@@ -581,6 +623,7 @@ ${task}`;
         case 'search_web': {
           const query = input.query;
           if (!query) break;
+          await setActivity(db, self, convo.id, 'searching', query);
           const found = await webSearch(db, query).catch((err) => {
             console.error('web search failed', err instanceof Error ? err.message : err);
             return null;
@@ -590,6 +633,7 @@ ${task}`;
         }
       }
     }
+  }
   }
 }
 

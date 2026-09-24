@@ -7,6 +7,7 @@ import { clockTime, timeAgo, useOffice, useThread, type ConversationWithPeople }
 import { navigate } from '@/lib/router';
 import { useNarrow } from '@/lib/useNarrow';
 import { useNow } from '@/lib/useNow';
+import { activityLabel, useAgentActivity } from '@/lib/activity';
 import type { Agent, Message as Msg } from '@/lib/types';
 import { EmptyState, ErrorLine, HUMAN_TONE, conversationFaces, conversationLabel } from '../ui';
 import { NewConversation } from './NewConversation';
@@ -166,8 +167,9 @@ const authorKey = (m: Msg) => m.author_agent_id ?? m.author_user_id ?? 'system';
 function Thread({ convo, label, membersOpen, onToggleMembers }: { convo: ConversationWithPeople; label: string; membersOpen?: boolean; onToggleMembers?: () => void }) {
   const { session } = useAuth();
   const me = session?.user.id;
-  const { agents, agentById, memberById } = useOffice();
+  const { office, agents, agentById, memberById } = useOffice();
   const { messages, reactions, loading, live, applyLocal } = useThread(convo.id);
+  const activity = useAgentActivity(office?.id);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   /** Who should be reading your last message, and since when. Replies and reactions clear them. */
@@ -190,6 +192,16 @@ function Thread({ convo, label, membersOpen, onToggleMembers }: { convo: Convers
           !reactions.some((r) => r.agent_id === a.id && r.created_at > asked.since),
       )
     : [];
+  // What the server says each agent is doing in this thread, then the client's guess for anyone
+  // it hasn't picked up yet ("reading" in the ~1.5s before a turn starts).
+  const working = [...activity.values()]
+    .filter((r) => r.conversation_id === convo.id)
+    .flatMap((r) => {
+      const a = agentById(r.agent_id);
+      return a ? [{ agent: a, label: `${a.name} is ${activityLabel(r)}` }] : [];
+    });
+  const waiting = readers.filter((a) => !activity.has(a.id));
+  const indicators = working.length + (waiting.length ? 1 : 0);
   const unseen = atEnd ? 0 : Math.max(0, messages.length - seen);
 
   const scrollToEnd = useCallback((smooth: boolean) => {
@@ -209,8 +221,8 @@ function Thread({ convo, label, membersOpen, onToggleMembers }: { convo: Convers
     } else if (atEnd || lastMine) scrollToEnd(true);
   }, [count, loading, lastMine, atEnd, scrollToEnd]);
   useEffect(() => {
-    if (readers.length && atEnd) scrollToEnd(true);
-  }, [readers.length, atEnd, scrollToEnd]);
+    if (indicators && atEnd) scrollToEnd(true);
+  }, [indicators, atEnd, scrollToEnd]);
 
   // Nobody replies to everything; stop showing "reading" after half a minute.
   useEffect(() => {
@@ -299,7 +311,10 @@ function Thread({ convo, label, membersOpen, onToggleMembers }: { convo: Convers
               </Fragment>
             );
           })}
-          {readers.length ? <TypingIndicator key={readers.map((r) => r.id).join()} author={readers[0].name} tone={readers[0].tone} label={readingLabel(readers)} /> : null}
+          {working.map((w) => (
+            <TypingIndicator key={`${w.agent.id}:${w.label}`} author={w.agent.name} tone={w.agent.tone} label={w.label} />
+          ))}
+          {waiting.length ? <TypingIndicator key={waiting.map((r) => r.id).join()} author={waiting[0].name} tone={waiting[0].tone} label={readingLabel(waiting)} /> : null}
         </div>
       </div>
       {unseen > 0 ? (
@@ -334,7 +349,8 @@ function ThreadSkeleton() {
 
 function Members({ convo }: { convo: ConversationWithPeople }) {
   const { session } = useAuth();
-  const { agents, members, agentById, memberById } = useOffice();
+  const { office, agents, members, agentById, memberById } = useOffice();
+  const activity = useAgentActivity(office?.id);
   const agentIds = convo.kind === 'office' ? agents.map((a) => a.id) : convo.participants.flatMap((p) => (p.agent_id ? [p.agent_id] : []));
   const userIds = convo.kind === 'office' ? members.map((m) => m.user_id) : convo.participants.flatMap((p) => (p.user_id ? [p.user_id] : []));
   return (
@@ -350,7 +366,7 @@ function Members({ convo }: { convo: ConversationWithPeople }) {
               key={id}
               name={a.name}
               tone={a.tone}
-              meta={`@${a.handle}`}
+              meta={activity.get(a.id) ? activityLabel(activity.get(a.id)!) : `@${a.handle}`}
               trailing={a.model_error_at ? <span className="c-alarm" role="img" aria-label="Brain error" title="Brain error" /> : a.status === 'Paused' ? <MonoLabel size="tiny" tone="var(--text-muted)">Paused</MonoLabel> : <span className="c-dot" data-live style={{ '--dot': a.tone } as StyleVars} />}
               onClick={() => navigate(`/app/agents/${a.id}`)}
             />
