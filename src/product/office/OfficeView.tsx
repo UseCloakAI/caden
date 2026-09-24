@@ -162,6 +162,28 @@ function readingLabel(readers: Agent[]) {
   return `${names.slice(0, 2).join(', ')} and ${names.length - 2} more are reading`;
 }
 
+const hostOf = (url: string) => {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '');
+  } catch {
+    return url;
+  }
+};
+
+/** Numbered source chips under an agent's answer, one per site it read. */
+function Sources({ sources }: { sources: NonNullable<Msg['sources']> }) {
+  return (
+    <span className="p-sources" aria-label="Sources">
+      {sources.map((s, i) => (
+        <a key={s.url} className="p-source" href={s.url} target="_blank" rel="noopener noreferrer" title={s.title}>
+          <span className="p-source__n">{i + 1}</span>
+          <span className="p-source__host">{hostOf(s.url)}</span>
+        </a>
+      ))}
+    </span>
+  );
+}
+
 const authorKey = (m: Msg) => m.author_agent_id ?? m.author_user_id ?? 'system';
 
 function Thread({ convo, label, membersOpen, onToggleMembers }: { convo: ConversationWithPeople; label: string; membersOpen?: boolean; onToggleMembers?: () => void }) {
@@ -307,6 +329,7 @@ function Thread({ convo, label, membersOpen, onToggleMembers }: { convo: Convers
                   footer={<ReactionBar messageId={m.id} reactions={reactions} me={me} onLocal={applyLocal} onError={setError} align={mine ? 'end' : 'start'} />}
                 >
                   {renderBody(m.body)}
+                  {m.sources?.length ? <Sources sources={m.sources} /> : null}
                 </Message>
               </Fragment>
             );

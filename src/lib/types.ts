@@ -68,6 +68,8 @@ export interface Message {
   kind: 'agent' | 'you' | 'system';
   body: string;
   hop: number;
+  /** Where an agent's answer came from, when it searched or read pages that turn. */
+  sources?: { title: string; url: string }[] | null;
   created_at: string;
 }
 

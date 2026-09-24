@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from './supabase';
 
-export type ActivityState = 'idle' | 'reading' | 'thinking' | 'searching' | 'messaging' | 'writing';
+export type ActivityState = 'idle' | 'reading' | 'thinking' | 'searching' | 'browsing' | 'messaging' | 'writing';
 
 export interface AgentActivity {
   agent_id: string;
@@ -60,6 +60,8 @@ export function activityLabel(a: Pick<AgentActivity, 'state' | 'detail'>) {
       return 'thinking';
     case 'searching':
       return a.detail ? `searching the web for “${a.detail}”` : 'searching the web';
+    case 'browsing':
+      return a.detail ? `reading ${a.detail}` : 'reading a page';
     case 'messaging':
       return a.detail ? `messaging ${a.detail}` : 'messaging an agent';
     case 'writing':
