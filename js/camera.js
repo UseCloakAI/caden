@@ -1,5 +1,5 @@
 // Camera: one webcam stream shared by everything that looks (faces.js,
-// body.js), on the single #cam <video>. Ref-counted: the camera turns off
+// hands.js), on the single #cam <video>. Ref-counted: the camera turns off
 // when the last user lets go. Frames never leave the device.
 let stream = null;
 let opening = null;

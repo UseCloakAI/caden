@@ -14,7 +14,7 @@ import { Faces } from './faces.js';
 import { Ears, Mouth, findWake, normalize, hearingEngines } from './voice.js';
 import { think, homeContext, homeId, brainSync, brainForget, brainClear, stripRemember } from './brain.js';
 import { Orb, E } from './orb.js';
-import { Body } from './body.js';
+import { Hands } from './hands.js';
 import { AirNav } from './airnav.js';
 
 const $ = (id) => document.getElementById(id);
@@ -56,7 +56,7 @@ const mesh = new Mesh(me.id);
 const ears = new Ears();
 const mouth = new Mouth();
 const faces = new Faces($('cam'));
-const body = new Body();
+const hands = new Hands();
 let air = null; // AirNav, built at boot (needs the DOM)
 let orb, miniOrb, setupOrb;
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -513,37 +513,43 @@ ears.addEventListener('state', (e) => {
 });
 // The camera dot covers both faces and body tracking.
 function camDot() {
-  const f = faces.state, b = body.state;
+  const f = faces.state, b = hands.state;
   const any = (s) => f === s || b === s;
   if (any('denied')) { dot('dotCam', 'off', 'Camera blocked'); return; }
   if (any('loading')) { dot('dotCam', 'warn', 'Waking up my eyes…'); return; }
   if (f === 'on' || b === 'on') {
-    dot('dotCam', 'on', [f === 'on' && 'Seeing faces', b === 'on' && 'Tracking bodies'].filter(Boolean).join(' and ')); return;
+    dot('dotCam', 'on', [f === 'on' && 'Seeing faces', b === 'on' && 'Tracking hands'].filter(Boolean).join(' and ')); return;
   }
   if (any('error')) { dot('dotCam', 'off', 'Camera unavailable'); return; }
   dot('dotCam', '', 'Camera off');
 }
 faces.addEventListener('state', camDot);
-body.addEventListener('state', (e) => {
+hands.addEventListener('state', (e) => {
   camDot();
-  if (e.detail.state === 'error') toast("Body tracking couldn't start on this device.");
+  if (e.detail.state === 'error') toast("Hand tracking couldn't start on this device.");
 });
 
-// ── touch-free display: body gestures ───────────────────────────────────────
-body.addEventListener('pointer', (e) => { air?.pointer(e.detail); if (e.detail.active) activity = now(); });
-body.addEventListener('pose', (e) => { air?.pose(e.detail); if (e.detail.people.length) activity = now(); });
-body.addEventListener('gesture', (e) => {
+// ── touch-free display: hand gestures ───────────────────────────────────────
+hands.addEventListener('pointer', (e) => { air?.pointer(e.detail); if (e.detail.active) activity = now(); });
+hands.addEventListener('pose', (e) => { air?.pose(e.detail); if (e.detail.hands.length) activity = now(); });
+hands.addEventListener('gesture', (e) => {
   const { name, dir } = e.detail;
   activity = now();
   if (name === 'wave') {
     air?.flash('wave', 'Wave');
     if (!iHold()) claim('tap', freshSight() ? lastSight.person : null); // come here
     else if (!moving) orb.hop();                                       // wave back
-  } else if (name === 'handsUp') {
-    air?.flash('handsUp', 'Listening');
+  } else if (name === 'thumbsUp') {
+    air?.flash('thumbsUp', 'Listening');
     if (sheetTab) closeSheet();
     if (iHold()) { if (mouth.speaking || phase === 'thinking') orbTap(); else listenNow(); }
     else claim('voice', freshSight() ? lastSight.person : null); // arrives listening
+  } else if (name === 'thumbsDown') {
+    // Back: close Settings, or stop Caden mid-sentence, or end listening.
+    air?.flash('thumbsDown', 'Back');
+    if (sheetTab) closeSheet();
+    else if (iHold() && (mouth.speaking || phase === 'thinking')) orbTap();
+    else if (mode === 'command') { mode = 'wait'; if (iHold()) setPhase('idle'); }
   } else if (name === 'swipe') {
     air?.swipe(dir);
   }
@@ -606,11 +612,11 @@ function startSenses() {
 // Touch-free display mode: body tracking drives an air cursor + gestures.
 function applyDisplay() {
   air?.enable(!!settings.display && !!home);
-  if (settings.display && home) body.start(); else body.stop();
+  if (settings.display && home) hands.start(); else hands.stop();
   applyTyping();
   if (!$('hint')) return;
   $('hint').innerHTML = settings.display
-    ? 'Wave, or say <kbd>Hey Caden</kbd>'
+    ? 'Wave, give a thumbs up, or say <kbd>Hey Caden</kbd>'
     : (/iPhone|iPad/.test(navigator.userAgent) && !isNative ? 'Tap me once, then say <kbd>Hey Caden</kbd>' : 'Say <kbd>Hey Caden</kbd>');
 }
 let wakeLock = null;
@@ -826,7 +832,7 @@ function panel(tab) {
         ${toggleRow('followUp', 'Keep listening after I answer', 'For a few seconds, no wake word needed')}
         ${toggleRow('typing', 'Show a type box', 'Talk to me with the keyboard')}
         ${toggleRow('awake', 'Keep screen awake', 'Good for a wall tablet or kitchen display')}
-        ${toggleRow('display', 'Touch-free display', 'Navigate with your body from across the room: raise a hand to point, hold still to press, wave to call me. Needs a webcam.')}
+        ${toggleRow('display', 'Touch-free display', 'Navigate with your hand: point, pinch to press, pinch and drag to scroll, wave to call me. Needs a webcam.')}
       </div>
       <div class="card"><h3>What I remember</h3>
         ${memories.length ? memories.map((m) => `<div class="line"><span class="grow">${esc(m.fact)}<small>${esc(m.who || '')}</small></span><button class="btn small ghost" data-act="forget" data-id="${m.id}">Forget</button></div>`).join('') : '<div class="empty">Nothing yet. Tell me things worth remembering.</div>'}
@@ -878,7 +884,7 @@ function bindPanel(host) {
     saveSettings();
     if (el.dataset.set === 'typing') applyTyping();
     if (el.dataset.set === 'mic' || el.dataset.set === 'cam') startSenses();
-    if (el.dataset.set === 'display') { applyDisplay(); if (el.checked) toast('Raise a hand to point. Hold still to press.'); }
+    if (el.dataset.set === 'display') { applyDisplay(); if (el.checked) toast('Point with your hand. Pinch to press.'); }
     if (el.dataset.set === 'awake') { if (el.checked) requestWake(); else wakeLock?.release().catch(() => {}); }
   }));
   const eng = host.querySelector('#sEngine');
@@ -987,7 +993,7 @@ function boot() {
   tickClock();
   stopEnroll();
   air = new AirNav();
-  if (/[?&]debug\b/.test(location.search)) window.__caden = { body, air, settings }; // test hook
+  if (/[?&]debug\b/.test(location.search)) window.__caden = { hands, air, settings }; // test hook
   // #display boots straight into touch-free mode (kiosk screens).
   if (/(^|[#&])display\b/.test(location.hash)) { settings.display = true; saveSettings(); }
   applyDisplay();

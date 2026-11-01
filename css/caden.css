@@ -361,7 +361,7 @@ html.air-pointing, html.air-pointing * { cursor: none; }
 
 .air-guide {
   position: fixed; left: 50%; bottom: max(12px, env(safe-area-inset-bottom)); translate: -50% 0; z-index: 6;
-  display: flex; gap: 6px; flex-wrap: nowrap; max-width: calc(100vw - 220px); overflow: hidden; pointer-events: none;
+  display: flex; gap: 6px; flex-wrap: nowrap; max-width: calc(100vw - 300px); pointer-events: none;
   transition: opacity var(--t-slow) var(--e-out), translate var(--t-slow) var(--e-out);
 }
 .air-guide span {
@@ -372,7 +372,7 @@ html.air-pointing, html.air-pointing * { cursor: none; }
 .air-guide span.hit { animation: guideHit 700ms var(--e-pop); }
 @keyframes guideHit { 25% { scale: 1.12; background: color-mix(in oklab, var(--coral) 30%, var(--card)); color: var(--ink); } }
 html.air-pointing .air-guide { opacity: .35; }
-@media (max-width: 900px) { .air-guide span:nth-child(n+4) { display: none; } }
+
 
 .air-pip {
   position: fixed; right: 16px; bottom: max(12px, env(safe-area-inset-bottom)); z-index: 6; width: 112px; height: 84px;
@@ -380,3 +380,12 @@ html.air-pointing .air-guide { opacity: .35; }
   box-shadow: var(--sh); pointer-events: none; transition: opacity var(--t-slow);
 }
 .air-pip.empty { opacity: .45; }
+/* hand-tracking cursor states: ring fills as fingers close; pinched = pressed in; dragging = scrolling */
+.air-cursor.pinched .air-dot { scale: .72; }
+.air-cursor.dragging .air-ring { opacity: .35; }
+.air-cursor.dragging .air-dot { scale: .8 1.25; }
+/* fewest words first to go: show 6 chips on wide screens, down to 3 */
+@media (max-width: 1360px) { .air-guide span:nth-child(n+6) { display: none; } }
+@media (max-width: 1140px) { .air-guide span:nth-child(n+5) { display: none; } }
+@media (max-width: 940px) { .air-guide span:nth-child(n+4) { display: none; } }
+@media (max-width: 720px) { .air-guide span:nth-child(n+3) { display: none; } }

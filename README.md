@@ -27,18 +27,20 @@ One device **holds** Caden at a time (`js/app.js`).
 
 ### Touch-free display mode
 
-For a screen with a webcam (wall display, kitchen laptop, TV box): Settings → Home → **Touch-free display**, or open the app with `#display` to boot straight into it. Navigation runs on full-body pose (MediaPipe Pose Landmarker, on device), which works from across the room, where hand tracking can't see fingers.
+For a screen with a webcam (wall display, kitchen laptop, TV box): Settings → Home → **Touch-free display**, or open the app with `#display` to boot straight into it. Navigation runs on hand tracking (MediaPipe Gesture Recognizer: 21 hand landmarks plus a gesture class, on device). Works best within about 2m of the camera.
 
 | Do this | Caden does |
 |---|---|
-| Raise a hand | An air cursor follows it (mapped from a comfortable box beside your shoulder, so small moves reach every corner) |
-| Hold still on a control | A ring fills and it's pressed (900ms); the cursor snaps to nearby controls |
-| Point near the top/bottom of a list | It scrolls |
+| Move your hand | An air cursor follows your index knuckle (it doesn't jump when you pinch). The pointing area shrinks with distance, so small moves reach every corner |
+| Pinch thumb and index | Presses what's under the cursor; the ring fills as your fingers close |
+| Pinch and drag up/down | Scrolls the list, like a finger on a phone (no press) |
+| Make a fist | Rests the cursor so you can lower your hand |
 | Wave | Calls Caden to this screen (or it waves back) |
-| Both hands over your head | Caden listens, like saying its name |
+| Thumbs up | Caden listens, like saying its name |
+| Thumbs down | Back: closes Settings, stops Caden talking, or ends listening |
 | Swipe left/right | Switches Settings tabs |
 
-Targets get bigger, the type box hides, and a small stick-figure preview (drawn from landmarks, never the camera image) shows you're being tracked. External links are not pressable, so a kiosk can't navigate away. Faces and pose share one camera stream (`js/camera.js`). For an unattended kiosk, launch Chrome with `--autoplay-policy=no-user-gesture-required` so Caden can speak without a first tap.
+Targets get bigger, the type box hides, and a small hand preview (drawn from landmarks, never the camera image) shows you're being tracked. External links are not pressable, so a kiosk can't navigate away. Faces and hands share one camera stream (`js/camera.js`). For an unattended kiosk, launch Chrome with `--autoplay-policy=no-user-gesture-required` so Caden can speak without a first tap.
 
 ### Turns
 
@@ -61,9 +63,9 @@ js/faces.js           face detection / recognition / enrollment
 js/voice.js           ears, mouth, wake-word matching
 js/brain.js           brain client (Supabase edge function, Cloak fallback)
 js/orb.js             the orb and its flights
-js/camera.js          one shared webcam stream (faces + body)
-js/body.js            pose → air pointer, wave / swipe / hands-up gestures
-js/airnav.js          air cursor, dwell press, edge scroll, gesture guide, skeleton preview
+js/camera.js          one shared webcam stream (faces + hands)
+js/hands.js           hand landmarks → air pointer, pinch, wave / swipe / thumbs gestures
+js/airnav.js          air cursor, pinch press, pinch-drag scroll, gesture guide, hand preview
 js/config.js          endpoints + tuning
 android/              Android app: WebView serving the same files from assets + native speech bridge
 supabase/             brain edge function + migration
