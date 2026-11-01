@@ -13,7 +13,7 @@ import { Mesh } from './mesh.js';
 import { Faces } from './faces.js';
 import { Ears, Mouth, findWake, normalize, hearingEngines } from './voice.js';
 import { think, homeContext, homeId, brainSync, brainForget, brainClear, stripRemember } from './brain.js';
-import { Orb } from './orb.js';
+import { Orb, E } from './orb.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -54,7 +54,8 @@ const mesh = new Mesh(me.id);
 const ears = new Ears();
 const mouth = new Mouth();
 const faces = new Faces($('cam'));
-let orb, miniOrb;
+let orb, miniOrb, setupOrb;
+const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const alive = () => people.filter((p) => !p.deleted);
 const iHold = () => holder.id === me.id;
@@ -257,6 +258,7 @@ function renderOrb() {
 
 // ── hearing ──────────────────────────────────────────────────────────────────
 function listenNow() {
+  if (iHold() && !(mode === 'command' && now() < modeUntil)) orb?.perk(); // heard you
   mode = 'command';
   modeUntil = now() + 7000;
   activity = now();
@@ -339,6 +341,7 @@ async function runTurn(text, who) {
   } catch (e) {
     if (ctrl.signal.aborted) return;
     turn.reply = "Sorry, I couldn't reach my brain just now. Try again in a moment.";
+    orb.shake();
     appendSaid(turn.reply);
     say(turn.reply);
     console.warn('[caden] turn failed', e);
@@ -376,7 +379,7 @@ function appendSaid(text) {
     if (/^\s+$/.test(w)) { frag.appendChild(document.createTextNode(w)); return; }
     const s = document.createElement('span');
     s.className = 'w';
-    s.style.animationDelay = `${i * 28}ms`;
+    s.style.animationDelay = `${Math.min(i * 14, 280)}ms`; // i counts spaces too: 28ms a word, capped
     s.textContent = w;
     frag.appendChild(s);
   });
@@ -409,6 +412,7 @@ function renderView(animate = false) {
   if (setup) return;
   $('where').innerHTML = `${roomIcon(me.room)}${esc(me.room || me.name)}`;
   const here = iHold() || moving;
+  document.documentElement.classList.toggle('is-away', !here);
   $('here').hidden = !here;
   $('away').hidden = here;
   $('clock').style.opacity = here ? '1' : '.5';
@@ -426,26 +430,67 @@ function renderView(animate = false) {
   renderDock();
 }
 
+// Dock: one chip per device, keyed by id so chips can pop in and out. The
+// coral puck marks where Caden is; when Caden moves it stretches from the old
+// chip to the new one, leading edge first, then the tail catches up.
+let puckAt = null; // { id, x, w }
 function renderDock() {
   const nav = $('rooms');
   const list = liveDevices();
-  nav.querySelectorAll('.room').forEach((n) => n.remove());
-  for (const d of list) {
-    const b = document.createElement('button');
-    b.className = 'room' + (d.id === me.id ? ' me' : '') + (d.id === holder.id ? ' holder' : '');
-    b.dataset.id = d.id;
-    b.innerHTML = `<span class="k" aria-hidden="true">${roomIcon(d.room)}</span>${esc(d.room || d.name)}`;
-    b.setAttribute('aria-label', `${d.room || d.name}${d.id === holder.id ? ', Caden is here' : ''}${d.id === me.id ? ', this device' : ''}`);
-    if (d.id === me.id && !iHold()) b.onclick = () => claim('tap');
-    nav.appendChild(b);
+  const have = new Map([...nav.querySelectorAll('.room')].filter((n) => !n.classList.contains('pop-out')).map((n) => [n.dataset.id, n]));
+  const want = new Set(list.map((d) => d.id));
+  for (const [id, n] of have) {
+    if (want.has(id)) continue;
+    if (reduced()) { n.remove(); continue; }
+    n.classList.add('pop-out');
+    n.addEventListener('animationend', () => { n.remove(); placePuck(); }, { once: true });
   }
-  const puck = $('puck');
-  const target = nav.querySelector(`.room[data-id="${CSS.escape(holder.id || '')}"]`);
-  if (target) {
-    puck.style.opacity = '1';
-    puck.style.left = target.offsetLeft + 'px';
-    puck.style.width = target.offsetWidth + 'px';
-  } else puck.style.opacity = '0';
+  let prev = null;
+  for (const d of list) {
+    let b = have.get(d.id);
+    if (!b) {
+      b = document.createElement('button');
+      b.dataset.id = d.id;
+      if (joinedAt && now() - joinedAt > 1500) b.classList.add('pop-in');
+      b.addEventListener('animationend', () => b.classList.remove('pop-in'), { once: true });
+    }
+    b.className = 'room' + (b.classList.contains('pop-in') ? ' pop-in' : '') + (d.id === me.id ? ' me' : '') + (d.id === holder.id ? ' holder' : '');
+    const html = `<span class="k" aria-hidden="true">${roomIcon(d.room)}</span>${esc(d.room || d.name)}`;
+    if (b.innerHTML !== html) b.innerHTML = html;
+    b.setAttribute('aria-label', `${d.room || d.name}${d.id === holder.id ? ', Caden is here' : ''}${d.id === me.id ? ', this device' : ''}`);
+    b.onclick = d.id === me.id && !iHold() ? () => claim('tap') : null;
+    // keep DOM order = sorted order
+    const after = prev ? prev.nextSibling : nav.querySelector('.puck').nextSibling;
+    if (b !== after) nav.insertBefore(b, after);
+    prev = b;
+  }
+  placePuck();
+}
+
+function placePuck() {
+  const nav = $('rooms'), puck = $('puck');
+  const target = nav.querySelector(`.room[data-id="${CSS.escape(holder.id || '')}"]:not(.pop-out)`);
+  if (!target) { puck.style.opacity = '0'; puckAt = null; return; }
+  const to = { id: holder.id, x: target.offsetLeft, w: target.offsetWidth };
+  puck.style.opacity = '1';
+  const moved = puckAt && puckAt.id !== to.id;
+  if (moved && !reduced()) {
+    const from = puckAt;
+    const right = to.x > from.x;
+    // Leading edge reaches the new chip first, the tail follows (gooey stretch).
+    const midX = right ? from.x : to.x;
+    const midW = right ? to.x + to.w - from.x : from.x + from.w - to.x;
+    puck.getAnimations().forEach((a) => a.cancel());
+    puck.animate([
+      { translate: `${from.x}px 0`, width: `${from.w}px`, easing: E.in },
+      { translate: `${midX}px 0`, width: `${midW}px`, scale: '1 .86', offset: 0.45, easing: E.out },
+      { translate: `${to.x - (right ? -4 : 4)}px 0`, width: `${to.w}px`, scale: '1 1.04', offset: 0.8, easing: E.io },
+      { translate: `${to.x}px 0`, width: `${to.w}px`, scale: '1 1' },
+    ], { duration: 900 });
+  }
+  puck.style.translate = `${to.x}px 0`;
+  puck.style.width = `${to.w}px`;
+  puckAt = to;
 }
 
 function tickClock() {
@@ -560,6 +605,7 @@ addEventListener('pagehide', () => { if (!home) return; if (iHold()) handOffBefo
 let draft = null, draftNew = false;
 function showStep(name) {
   document.querySelectorAll('.step').forEach((s) => { s.hidden = s.dataset.step !== name; });
+  setupOrb?.hop();
   if (name === 'device') {
     $('devName').value = me.name;
     const chips = $('roomChips');
@@ -610,7 +656,7 @@ $('btnMicOnly').onclick = () => finishSetup(false);
 function orbTap() {
   mouth.unlock();
   if (!iHold()) return;
-  if (mouth.speaking || phase === 'thinking') { turnCtrl?.abort(); turnCtrl = null; streaming = false; mouth.stop(); mode = 'wait'; setPhase('idle'); return; }
+  if (mouth.speaking || phase === 'thinking') { orb.squish(); turnCtrl?.abort(); turnCtrl = null; streaming = false; mouth.stop(); mode = 'wait'; setPhase('idle'); return; }
   listenNow();
   if (!settings.mic) { settings.typing = true; saveSettings(); applyTyping(); $('typeIn').focus(); }
 }
@@ -632,7 +678,16 @@ function openSheet(tab) { sheetTab = tab; renderSheet(); }
 function closeSheet() {
   sheetTab = null;
   stopEnroll();
-  $('sheetHost').innerHTML = '';
+  const host = $('sheetHost');
+  delete host.dataset.open;
+  const done = () => { if (!sheetTab) host.innerHTML = ''; };
+  const sheet = host.querySelector('.sheet');
+  if (!sheet || reduced()) done();
+  else {
+    host.querySelector('.scrim')?.classList.add('closing');
+    sheet.classList.add('closing');
+    setTimeout(done, 250);
+  }
   $('btnSettings').focus();
 }
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && sheetTab) closeSheet(); });
@@ -654,8 +709,12 @@ function renderSheet() {
   if (host.dataset.open) host.querySelector('.scrim').style.animation = 'none';
   host.dataset.open = '1';
   host.querySelector('.panel').scrollTop = scroll;
-  host.querySelectorAll('[data-close]').forEach((b) => (b.onclick = () => { delete host.dataset.open; closeSheet(); }));
-  host.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => { stopEnroll(); sheetTab = b.dataset.tab; renderSheet(); }));
+  host.querySelectorAll('[data-close]').forEach((b) => (b.onclick = closeSheet));
+  host.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => {
+    if (b.dataset.tab === sheetTab) return;
+    stopEnroll(); sheetTab = b.dataset.tab; renderSheet();
+    host.querySelector('.panel').classList.add('swap');
+  }));
   bindPanel(host);
 }
 
@@ -790,7 +849,7 @@ async function enroll(existingId) {
   if (box) { box.hidden = false; box.prepend(vid); vid.hidden = false; vid.className = ''; }
   if (btn) { btn.disabled = true; btn.textContent = 'Looking…'; }
   try {
-    const d = await faces.enroll(6, (i, n) => { const p = $('camProg'); if (p) p.style.width = `${(i / n) * 100}%`; });
+    const d = await faces.enroll(6, (i, n) => { const p = $('camProg'); if (p) p.style.scale = `${i / n} 1`; });
     if (existingId) {
       const p = people.find((x) => x.id === existingId);
       p.d = [...(p.d || []), ...d].slice(-18);
@@ -836,7 +895,7 @@ function boot() {
   orb = new Orb($('orb'));
   miniOrb = new Orb($('miniOrb'));
   miniOrb.set('sleepy');
-  new Orb($('setupOrb')).hop();
+  setupOrb = new Orb($('setupOrb'));
   $('orb').addEventListener('click', orbTap);
   $('orb').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); orbTap(); } });
   document.addEventListener('pointerdown', () => mouth.unlock(), { once: true });
