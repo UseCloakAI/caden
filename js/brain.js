@@ -24,7 +24,7 @@ export const brainForget = (home, id) => brainCall({ action: 'forget', home, id 
 export const brainClear = (home) => brainCall({ action: 'clear', home });
 export const stripRemember = (s) => String(s || '').split('\n').filter((l) => !/^\s*(REMEMBER:|DO:|<search\b)/i.test(l)).join('\n').trim().replace(/^\[[^\]\n]{1,40}\]\s*/, '');
 
-export function homeContext({ room, device, people, here, place, rooms = [] }) {
+export function homeContext({ room, device, people, here, place, rooms = [], clocks = [] }) {
   const now = new Date();
   const time = now.toLocaleString(undefined, { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -34,6 +34,7 @@ export function homeContext({ room, device, people, here, place, rooms = [] }) {
     `- Local time: ${time} (${tz}).`,
     place?.place ? `- The home is in or near ${place.place} (${place.how === 'device' ? 'from the device' : 'approximate, from the network'}). Use ${place.units === 'imperial' ? 'Fahrenheit and miles' : 'Celsius and kilometres'}.` : '',
     rooms.length ? `- Screens in this home right now: ${[...new Set(rooms)].join(', ')}.` : '',
+    clocks.length ? `- Timers and alarms:\n${clocks.map((c) => `  - ${c}`).join('\n')}` : '- No timers or alarms are set.',
     people.length ? `- People in this home: ${people.join(', ')}.` : '- Nobody has been introduced to you yet.',
     here.length ? `- In front of this device right now: ${here.join(', ')}.` : '',
   ].filter(Boolean).join('\n');

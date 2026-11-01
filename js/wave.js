@@ -48,7 +48,7 @@ export class Wave {
     this.state = 'idle';
     this.mood = [...MOOD.idle];
     this.t = 8; this.energy = 0; this.push = 0; this.flash = 0;
-    this.mic = 0; this.voice = 0; this.pulse = 0; this.shakeT = 0;
+    this.mic = 0; this.voice = 0; this.bright = 0.3; this.pulse = 0; this.shakeT = 0;
     this.dim = 1; this.dimTo = 1;
     this.flight = null; // {kind:'out'|'in', dir, start, dur, resolve}
     this.hidden = false;
@@ -146,10 +146,13 @@ export class Wave {
     for (let i = 0; i < 3; i++) this.mood[i] += (target[i] - this.mood[i]) * Math.min(1, dt * 2.5);
     const [speed, amp, bright] = this.mood;
 
-    // voice: real audio level if there is one, else syllable pulses
-    const real = this.state === 'speaking' && this.speech ? this.speech() : 0;
-    const drive = Math.max(real, this.pulse * 0.8, this.state === 'listening' ? this.mic : 0);
-    this.voice += (drive - this.voice) * Math.min(1, dt * (drive > this.voice ? 14 : 5));
+    // voice: the real speech envelope while Caden talks (js/voice.js
+    // speechTrack), word pulses for the device voice, the mic while listening
+    const sp = this.speech ? this.speech() : null;
+    const real = sp && typeof sp === 'object' ? sp : null;
+    const drive = real ? real.level : Math.max(this.pulse * 0.8, this.state === 'listening' ? this.mic : 0);
+    this.voice += (drive - this.voice) * Math.min(1, dt * (real ? 30 : drive > this.voice ? 14 : 5));
+    this.bright += ((real ? real.bright : 0.3) - this.bright) * Math.min(1, dt * 10);
     this.pulse *= Math.exp(-dt * 7);
     this.mic *= Math.exp(-dt * 6);
     this.energy *= Math.exp(-dt * 2.2);
@@ -181,10 +184,13 @@ export class Wave {
       for (let i = 0; i <= n; i++) {
         const nx = i / n;
         const hump = Math.sin(nx * Math.PI);
-        // speech swells the middle of the wave, one breath, no jitter
+        // speech swells the middle of the wave with its loudness, and rides a
+        // travelling ripple whose grain follows the sound: broad for vowels,
+        // fine for s / f / t
         const swell = 1 + v * 0.9 * hump;
+        const ripple = Math.sin(nx * (5 + this.bright * 11) * TAU - ph * (5 + this.bright * 5)) * v * 0.05 * hump;
         const B = this.band;
-        this.cy[i] = this.top + B * r.y + (Math.sin(nx * r.k1 * TAU + ph * r.w1 + r.p) * r.a1 + Math.sin(nx * r.k2 * TAU - ph * r.w2) * r.a2) * B * swell + shake;
+        this.cy[i] = this.top + B * r.y + (Math.sin(nx * r.k1 * TAU + ph * r.w1 + r.p) * r.a1 + Math.sin(nx * r.k2 * TAU - ph * r.w2) * r.a2 + ripple) * B * swell + shake;
         this.hw[i] = B * r.width * swell * Math.sin(nx * r.kt * TAU + ph * r.wt + r.p + 0.9) * (0.35 + 0.65 * hump);
       }
       const strandSpan = (s) => {

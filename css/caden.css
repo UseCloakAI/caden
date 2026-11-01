@@ -667,3 +667,41 @@ html[data-quality="medium"] .sheet, html[data-quality="medium"] .wheel-ring, htm
 .quality .stops span:nth-child(2) { left: calc(9px + (100% - 18px) / 3); }
 .quality .stops span:nth-child(3) { left: calc(9px + (100% - 18px) * 2 / 3); }
 .quality .stops span:nth-child(4) { left: calc(100% - 9px); translate: calc(-100% + 9px) 0 !important; }
+
+/* timers & alarms on this screen: small pills under the clock */
+.clocks { position: fixed; z-index: 6; right: 28px; top: calc(max(20px, env(safe-area-inset-top)) + 70px); display: grid; justify-items: end; gap: 8px; pointer-events: none; }
+.clock-pill {
+  pointer-events: auto; display: inline-flex; align-items: center; gap: 8px; padding: 7px 12px 7px 10px; border-radius: 999px; cursor: pointer;
+  background: var(--card); border: 1px solid var(--glass-bd); color: var(--ink); font: inherit; font-size: 14px; font-weight: 500; box-shadow: var(--sh);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+  animation: wheelIn var(--t-std) var(--e-out) both;
+}
+.clock-pill .ph { font-size: 17px; color: var(--acc-ink); }
+.clock-pill b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.clock-pill span { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink2); }
+.clock-pill.ringing { background: var(--acc); color: var(--on-acc); border-color: transparent; }
+.clock-pill.ringing .ph, .clock-pill.ringing span { color: inherit; }
+html.resting .clocks { right: 50%; translate: 50% 0; top: calc((100dvh - var(--wave-h)) / 2 + 90px); justify-items: center; transition: top var(--t-slow) var(--e-out); }
+@media (max-width: 720px) { .clocks { right: 20px; top: calc(max(20px, env(safe-area-inset-top)) + 62px); } }
+
+/* notice card: announcements and a ringing timer / alarm */
+.notices { position: fixed; z-index: 45; left: 50%; translate: -50% 0; bottom: calc(var(--wave-h) + 16px); width: min(560px, calc(100vw - 40px)); display: grid; gap: 10px; pointer-events: none; }
+.notice {
+  pointer-events: auto; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; align-items: center; padding: 18px 20px; border-radius: var(--r);
+  background: rgba(240, 248, 255, .8); border: 1px solid var(--glass-bd); box-shadow: var(--sh-lg); color: var(--ink);
+  -webkit-backdrop-filter: blur(22px) saturate(150%); backdrop-filter: blur(22px) saturate(150%);
+  animation: noticeIn var(--t-std) var(--e-out) both;
+}
+html.night .notice { background: rgba(8, 26, 54, .84); }
+.notice-icon { font-size: 30px; color: var(--acc-ink); grid-row: span 2; }
+.notice-text { display: grid; gap: 2px; min-width: 0; }
+.notice-text b { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+.notice-text span { font-size: 17px; color: var(--ink2); }
+.notice-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.notice-actions .btn { min-height: 44px; padding: 0 20px; }
+.notice.leaving { animation: noticeOut 240ms var(--e-in) both; }
+@keyframes noticeIn { from { opacity: 0; translate: 0 12px; scale: .98; } }
+@keyframes noticeOut { to { opacity: 0; translate: 0 8px; } }
+html[data-quality="low"] .notice { background: rgba(236, 245, 253, .97); }
+html.night[data-quality="low"] .notice { background: rgba(10, 30, 60, .97); }
+@media (prefers-reduced-motion: reduce) { .notice, .notice.leaving, .clock-pill { animation: none; } }
