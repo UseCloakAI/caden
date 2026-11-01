@@ -6,6 +6,10 @@
 // strands retract toward the side Caden leaves by and sweep back in, thread by
 // thread, from the side it arrives from.
 //
+// Quality (setQuality): same motion at every level, cheaper drawing. Only the
+// band is a canvas (not the whole screen), it stops while the page is hidden,
+// and 'auto' steps down when frames get expensive.
+//
 // Same interface the orb had (set / level / talk / perk / shake / squish / hop
 // / leave / arrive / look), so the agent logic is unchanged.
 // One ribbon, living in one band along the bottom of the screen. Amplitudes
@@ -14,6 +18,19 @@ const RIBBONS = [
   { y: 0.5, a1: 0.2, k1: 0.5, w1: 0.22, a2: 0.07, k2: 1.1, w2: 0.31, width: 0.42, kt: 0.62, wt: 0.17, p: 0, strands: 26, alpha: 0.55 },
 ];
 const TAU = Math.PI * 2;
+// dpr cap, strands drawn, curve samples, sparks, frame-rate cap
+export const QUALITY = {
+  high: { dpr: 2, strands: 26, samples: 110, sparks: 10, fps: 60 },
+  medium: { dpr: 1.25, strands: 18, samples: 80, sparks: 6, fps: 60 },
+  low: { dpr: 1, strands: 12, samples: 56, sparks: 0, fps: 30 },
+};
+// A first guess for 'auto' from the hardware; frame timing refines it.
+export function guessQuality() {
+  const mem = navigator.deviceMemory || 4, cores = navigator.hardwareConcurrency || 4;
+  if (mem <= 2 || cores <= 4) return 'low';
+  if (mem <= 4 || cores <= 6) return 'medium';
+  return 'high';
+}
 const ease = (x) => 1 - Math.pow(1 - x, 3);
 const easeIn = (x) => x * x * x;
 const reduce = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -31,31 +48,70 @@ export class Wave {
     this.state = 'idle';
     this.mood = [...MOOD.idle];
     this.t = 8; this.energy = 0; this.push = 0; this.flash = 0;
-    this.mic = 0; this.voice = 0; this.pulse = 0; this.shakeT = 0;
+    this.mic = 0; this.voice = 0; this.bright = 0.3; this.pulse = 0; this.shakeT = 0;
     this.dim = 1; this.dimTo = 1;
     this.flight = null; // {kind:'out'|'in', dir, start, dur, resolve}
     this.hidden = false;
     this.speech = null; // () => 0..1 real audio level, set by app
     this.samples = 110;
-    this.cy = new Float32Array(this.samples + 1);
-    this.hw = new Float32Array(this.samples + 1);
+    this.cy = new Float32Array(111);
+    this.hw = new Float32Array(111);
+    this.mode = 'auto'; this.level = guessQuality(); this.q = QUALITY[this.level];
+    this.cost = 0; this.costN = 0; this.onLevel = null;
     this.sparks = Array.from({ length: 10 }, () => ({ x: Math.random(), y: 0.15 + Math.random() * 0.7, v: 0.004 + Math.random() * 0.012, p: Math.random() * TAU, r: 0.6 + Math.random() * 1.6 }));
     this.resize = this.resize.bind(this);
     addEventListener('resize', this.resize);
     this.resize();
     this.last = performance.now();
-    const loop = (now) => { this.frame(Math.min(0.05, (now - this.last) / 1000), now); this.last = now; requestAnimationFrame(loop); };
+    const loop = (now) => {
+      requestAnimationFrame(loop);
+      if (document.hidden) { this.last = now; return; }        // nothing to see
+      if (now - this.last < 1000 / this.q.fps - 3) return;     // frame-rate cap (low)
+      const t0 = performance.now();
+      this.frame(Math.min(0.05, (now - this.last) / 1000), now);
+      this.last = now;
+      this.watch(performance.now() - t0);
+    };
     requestAnimationFrame(loop);
   }
 
+  // 'auto' | 'high' | 'medium' | 'low'
+  setQuality(mode) {
+    this.mode = mode;
+    this.setLevel(mode === 'auto' ? guessQuality() : mode);
+  }
+  setLevel(level) {
+    if (!QUALITY[level]) return;
+    const changed = level !== this.level;
+    this.level = level; this.q = QUALITY[level];
+    this.samples = this.q.samples;
+    this.cost = 0; this.costN = 0;
+    this.resize();
+    if (changed || !this.told) { this.told = true; this.onLevel?.(level); }
+  }
+  // auto: average draw cost over ~2 s; step down when it eats the frame budget
+  watch(ms) {
+    if (this.mode !== 'auto') return;
+    this.cost += ms; this.costN++;
+    if (this.costN < 120) return;
+    const avg = this.cost / this.costN;
+    this.cost = 0; this.costN = 0;
+    if (avg > 7 && this.level !== 'low') this.setLevel(this.level === 'high' ? 'medium' : 'low');
+  }
+
   resize() {
-    const dpr = Math.min(devicePixelRatio || 1, 1.5);
+    const dpr = Math.min(devicePixelRatio || 1, this.q?.dpr || 1.5);
     this.W = innerWidth; this.H = innerHeight;
     // the band: bottom ~30% of the screen (CSS --wave-h keeps the layout in step)
     this.band = Math.max(150, Math.min(320, this.H * 0.3));
     this.top = this.H - this.band;
-    this.el.width = Math.round(this.W * dpr); this.el.height = Math.round(this.H * dpr);
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    // The canvas only covers the band (plus headroom for big swells), not the
+    // whole screen: far fewer pixels to fill and composite.
+    this.oy = Math.max(0, Math.round(this.top - this.band * 0.6));
+    const h = this.H - this.oy;
+    this.el.style.top = this.oy + 'px'; this.el.style.height = h + 'px';
+    this.el.width = Math.round(this.W * dpr); this.el.height = Math.round(h * dpr);
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, -this.oy * dpr);
   }
 
   // mirror: an element whose data-state follows the wave's (CSS, tests, a11y hooks)
@@ -90,10 +146,13 @@ export class Wave {
     for (let i = 0; i < 3; i++) this.mood[i] += (target[i] - this.mood[i]) * Math.min(1, dt * 2.5);
     const [speed, amp, bright] = this.mood;
 
-    // voice: real audio level if there is one, else syllable pulses
-    const real = this.state === 'speaking' && this.speech ? this.speech() : 0;
-    const drive = Math.max(real, this.pulse * 0.8, this.state === 'listening' ? this.mic : 0);
-    this.voice += (drive - this.voice) * Math.min(1, dt * (drive > this.voice ? 14 : 5));
+    // voice: the real speech envelope while Caden talks (js/voice.js
+    // speechTrack), word pulses for the device voice, the mic while listening
+    const sp = this.speech ? this.speech() : null;
+    const real = sp && typeof sp === 'object' ? sp : null;
+    const drive = real ? real.level : Math.max(this.pulse * 0.8, this.state === 'listening' ? this.mic : 0);
+    this.voice += (drive - this.voice) * Math.min(1, dt * (real ? 30 : drive > this.voice ? 14 : 5));
+    this.bright += ((real ? real.bright : 0.3) - this.bright) * Math.min(1, dt * 10);
     this.pulse *= Math.exp(-dt * 7);
     this.mic *= Math.exp(-dt * 6);
     this.energy *= Math.exp(-dt * 2.2);
@@ -111,7 +170,7 @@ export class Wave {
       if (fprog >= 1) { this.flight = null; if (f.kind === 'out') { this.dimTo = 0.22; this.dim = 0; } f.resolve(); }
     }
 
-    ctx.clearRect(0, 0, W, H);
+    ctx.clearRect(0, this.oy, W, H - this.oy);
     const alphaK = this.dim;
     if (alphaK < 0.01 && !this.flight) return;
     const shake = this.shakeT > 0 ? Math.sin(this.shakeT * 70) * this.shakeT * 18 : 0;
@@ -125,10 +184,13 @@ export class Wave {
       for (let i = 0; i <= n; i++) {
         const nx = i / n;
         const hump = Math.sin(nx * Math.PI);
-        // speech swells the middle of the wave, one breath, no jitter
+        // speech swells the middle of the wave with its loudness, and rides a
+        // travelling ripple whose grain follows the sound: broad for vowels,
+        // fine for s / f / t
         const swell = 1 + v * 0.9 * hump;
+        const ripple = Math.sin(nx * (5 + this.bright * 11) * TAU - ph * (5 + this.bright * 5)) * v * 0.05 * hump;
         const B = this.band;
-        this.cy[i] = this.top + B * r.y + (Math.sin(nx * r.k1 * TAU + ph * r.w1 + r.p) * r.a1 + Math.sin(nx * r.k2 * TAU - ph * r.w2) * r.a2) * B * swell + shake;
+        this.cy[i] = this.top + B * r.y + (Math.sin(nx * r.k1 * TAU + ph * r.w1 + r.p) * r.a1 + Math.sin(nx * r.k2 * TAU - ph * r.w2) * r.a2 + ripple) * B * swell + shake;
         this.hw[i] = B * r.width * swell * Math.sin(nx * r.kt * TAU + ph * r.wt + r.p + 0.9) * (0.35 + 0.65 * hump);
       }
       const strandSpan = (s) => {
@@ -151,7 +213,7 @@ export class Wave {
       if (started) ctx.fill();
 
       ctx.lineWidth = 1;
-      const count = base.strands;
+      const count = Math.min(base.strands, this.q.strands);
       for (let s = 0; s < count; s++) {
         const u = s / (count - 1) - 0.5, edge = Math.pow(Math.abs(u) * 2, 2);
         const [a0, a1] = strandSpan(s);
@@ -169,15 +231,17 @@ export class Wave {
     ctx.globalCompositeOperation = 'destination-in';
     const g = ctx.createLinearGradient(0, 0, W, 0);
     g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.14, 'rgba(0,0,0,1)'); g.addColorStop(0.86, 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = g; ctx.fillRect(0, this.top - this.band, W, this.band * 2.2);
+    ctx.fillStyle = g; ctx.fillRect(0, this.oy, W, H - this.oy);
     ctx.restore();
 
     const fast = this.state === 'thinking' ? 4 : 1;
-    for (const p of this.sparks) {
+    const span = f ? sx0g(f, fprog) : null;
+    for (let si = 0; si < this.q.sparks; si++) {
+      const p = this.sparks[si];
       p.x += (p.v * fast * (still ? 0 : 1) + this.energy * 0.01) * dt;
       if (p.x > 1.02) p.x -= 1.04;
       if (p.x < -0.02) p.x += 1.04;
-      if (f && (p.x < sx0g(f, fprog)[0] || p.x > sx0g(f, fprog)[1])) continue;
+      if (span && (p.x < span[0] || p.x > span[1])) continue;
       const a = (0.25 + 0.55 * (0.5 + 0.5 * Math.sin(this.t * (1.7 * fast) + p.p))) * (night ? 0.8 : 0.9) * alphaK;
       ctx.fillStyle = `rgba(${rgb},${a})`;
       ctx.beginPath();

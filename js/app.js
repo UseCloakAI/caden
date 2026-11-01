@@ -22,6 +22,7 @@ import { AirNav } from './airnav.js';
 import { Meter, score, pickLoudest } from './locate.js';
 import { sfx } from './sfx.js';
 import { where } from './where.js';
+import { parseDuration, parseAlarm, sayLeft, showLeft } from './clocks.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -41,7 +42,7 @@ let home = store.get('home');              // { code, id }
 let people = store.get('people', []);      // [{id,name,color,d:[...],updated,deleted?}]
 let turns = [];
 let memories = [];
-const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false, voiceEngine: 'nvidia', nvVoice: NV_VOICE, locate: true, voiceCal: null, sfx: true, sfxVol: 0.6, volume: 100, dim: 0, wakeHere: true }, store.get('settings', {}));
+const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false, voiceEngine: 'nvidia', nvVoice: NV_VOICE, locate: true, voiceCal: null, sfx: true, sfxVol: 0.6, volume: 100, dim: 0, wakeHere: true, quality: 'auto' }, store.get('settings', {}));
 const saveSettings = () => store.set('settings', settings);
 
 const devices = new Map();                 // id -> {id,name,room,kind,last,holder,epoch,sees,phase}
@@ -191,10 +192,10 @@ function onClaim(from, { reason, person }) {
   giveTo(from, reason, person);
 }
 
-function giveTo(to, reason, person) {
+function giveTo(to, reason, person, line = null) {
   const epoch = holder.epoch + 1;
   holder = { id: to, epoch };
-  mesh.send('handoff', { to, epoch, reason, person, fromName: me.room || me.name, turns: turns.slice(-12) });
+  mesh.send('handoff', { to, epoch, reason, person, line, fromName: me.room || me.name, turns: turns.slice(-12) });
   leaveHere(to, reason);
 }
 
@@ -205,7 +206,7 @@ function onHandoff(from, d) {
   holder = { id: d.to, epoch: d.epoch };
   const fromDev = devices.get(from);
   if (fromDev) fromDev.last = now();
-  if (d.to === me.id && was !== me.id) arriveHere(from, d.reason, d.person);
+  if (d.to === me.id && was !== me.id) arriveHere(from, d.reason, d.person, d.line);
   else if (was === me.id && d.to !== me.id) leaveHere(d.to, d.reason);
   else renderView();
 }
@@ -233,7 +234,7 @@ async function leaveHere(to, reason) {
   setWide(false);
 }
 
-async function arriveHere(from, reason, person) {
+async function arriveHere(from, reason, person, line = null) {
   moving = true;
   setPhase('idle');
   renderView();
@@ -246,7 +247,12 @@ async function arriveHere(from, reason, person) {
   moving = false;
   activity = now();
   const p = person ? alive().find((x) => x.id === person.id) || person : (freshSight() ? lastSight.person : null);
-  if (pending && now() - pending.at < 20000) {
+  if (line) {
+    // sent here to tell the room something ("go to the kitchen and tell them...")
+    pending = null;
+    sfx.play('announce', { force: true });
+    setTimeout(() => { showSaid(line); say(line); }, 900);
+  } else if (pending && now() - pending.at < 20000) {
     const job = pending; pending = null;
     runTurn(job.text, job.who);
   } else if (reason === 'voice' || reason === 'tap') {
@@ -426,13 +432,19 @@ function handleCommand(text) {
 const STOP = /^(stop|cancel|never ?mind|be quiet|shh+|quiet|that's all|thanks that's all|nothing)\W*$/i;
 
 // ── a turn ───────────────────────────────────────────────────────────────────
-async function runTurn(text, who) {
+async function runTurn(text, who, step = false) {
   if (!iHold()) return;
   activity = now();
   turnCtrl?.abort();
   turnCtrl = null;
   streaming = false;
   mouth.stop();
+  if (!step) agentSteps = 0;
+  if (ringing.size && /\b(stop|dismiss|turn (it|that) off|enough|okay|ok|snooze|quiet)\b/i.test(text)) {
+    const snooze = /\bsnooze\b/i.test(text);
+    for (const id of [...ringing.keys()]) stopClock(id, snooze);
+    setPhase('idle'); return;
+  }
   if (STOP.test(normalize(text))) { mode = 'wait'; setPhase('idle'); $('capSaid').textContent = ''; return; }
 
   const turn = { id: uid(), who: who?.name || 'Someone', whoId: who?.id || null, device: me.name, room: me.room, text, reply: '', at: now() };
@@ -452,6 +464,7 @@ async function runTurn(text, who) {
   const context = homeContext({
     room: me.room, device: me.name, place,
     rooms: liveDevices().map((d) => d.room || d.name),
+    clocks: clockLines(),
     people: alive().map((p) => p.name),
     here: freshSight() ? [lastSight.person.name] : [],
   });
@@ -465,7 +478,13 @@ async function runTurn(text, who) {
       },
     });
     turn.reply = stripRemember(full) || '…';
-    runActions(full, text);
+    const recent = [text, ...turns.slice(-3).filter((t) => t.whoId || t.who !== 'System').map((t) => t.text)].join(' ');
+    var stepResult = runActions(full, recent);
+    // A reply that was only actions: say what actually happened, briefly.
+    if (!stripRemember(full) && stepResult.notes.length && !stepResult.more) {
+      const line = stepResult.notes.join(' ');
+      turn.reply = line; appendSaid(line); say(line);
+    }
   } catch (e) {
     if (ctrl.signal.aborted) return;
     turn.reply = "Sorry, I couldn't reach my brain just now. Try again in a moment.";
@@ -480,35 +499,117 @@ async function runTurn(text, who) {
   if (turnCtrl !== ctrl) return; // a newer turn (or a move) took over
   turnCtrl = null;
   streaming = false;
+  if (stepResult) nextStep(stepResult);
   if (!mouth.speaking) afterSpeaking();
 }
 
 // ── things Caden can do: DO: lines at the end of a reply (never spoken) ─────
 const HIDDEN_LINE = /^\s*(REMEMBER:|DO:|<search\b)/i;
-let pendingGo = null;
-// The model sometimes adds an action nobody asked for; only act on the kind of
-// thing the person actually said.
+// Things to do once Caden has finished saying what it's doing (moving away,
+// telling another room, announcing over its own voice).
+let afterSpeech = [];
+function later(fn) { afterSpeech.push(fn); }
+function flushLater() { const jobs = afterSpeech; afterSpeech = []; jobs.forEach((fn, i) => setTimeout(fn, 300 + i * 150)); }
+
+// The model sometimes adds a screen action nobody asked for; only act on the
+// kind of thing someone in the conversation actually said.
 const ASKED = {
   go: /\b(go|move|head|come|switch|send|jump|hop|over to|to the|in the)\b/i,
   dim: /\b(dim|dark|darker|bright|brighter|brightness|screen|light)\b/i,
   volume: /\b(volume|loud|louder|quiet|quieter|soft|softer|turn (it |yourself )?(up|down)|mute)\b/i,
   clock: /\b(clock|rest|sleep|idle|screensaver|that's all|good ?night)\b/i,
 };
+const MAX_STEPS = 4;
+let agentSteps = 0;
+
+// Which screens: "everywhere" / "all", "here", or room / device names.
+function resolveWhere(text) {
+  const t = normalize(String(text || '')).trim();
+  const list = liveDevices();
+  if (!t || /^(everywhere|all|every ?(room|screen|device|where)|whole house|the house|all (rooms|screens|devices))$/.test(t)) return { ids: list.map((d) => d.id), missing: [] };
+  const ids = new Set(), missing = [];
+  // split the raw text (normalize drops commas), then try each part, then its words
+  for (const raw of String(text).split(/\s*(?:,|;|\band\b|&|\+|\/)\s*/i).map((x) => normalize(x).trim()).filter(Boolean)) {
+    const part = raw.replace(/^(the|in the|on the)\s+/, '');
+    if (/^(here|this (one|room|screen))$/.test(part)) { ids.add(me.id); continue; }
+    const d = findRoom(part);
+    if (d) { ids.add(d.id); continue; }
+    const byWord = part.split(/\s+/).map((w) => findRoom(w)).filter(Boolean);
+    if (byWord.length) byWord.forEach((x) => ids.add(x.id)); else missing.push(part);
+  }
+  return { ids: [...ids], missing };
+}
+const roomsOf = (ids) => ids.map((id) => devLabel(liveDevices().find((d) => d.id === id))).join(', ');
+
+// Run the DO: lines of a reply. Returns what happened, for the next agent step.
 function runActions(full, said = '') {
-  for (const line of String(full || '').split('\n')) {
+  const notes = [];
+  let more = false;
+  const lines = String(full || '').split('\n');
+  // "tell <room>" already takes Caden there; drop a "go" to the same room
+  const told = new Set(lines.map((l) => l.match(/^\s*DO:\s*tell\s+([^|]+)\|/i)?.[1]).filter(Boolean).map((r) => findRoom(r.trim())?.id).filter(Boolean));
+  for (const line of lines) {
     const m = line.match(/^\s*DO:\s*([a-z]+)\s*(.*)$/i);
     if (!m) continue;
-    const verb = m[1].toLowerCase(), arg = m[2].trim().replace(/\s+to move.*$/i, '').replace(/[.]+$/, '');
+    const verb = m[1].toLowerCase();
+    const raw = m[2].trim().replace(/\s+to move.*$/i, '').replace(/\s{2,}\(.*\)\s*$/, '');
+    const parts = raw.split('|').map((x) => x.trim());
+    const arg = parts[0].replace(/[.]+$/, '');
     const kind = verb === 'bright' || verb === 'undim' ? 'dim' : verb;
     if (ASKED[kind] && !ASKED[kind].test(said)) continue;
-    if (verb === 'go') pendingGo = arg;
-    else if (verb === 'dim') setDim(parseFloat(arg));
+    if (verb === 'continue') { more = true; continue; }
+    if (verb === 'go') {
+      const d = findRoom(arg);
+      if (d && told.has(d.id)) continue;
+      if (d) later(() => sendTo(d, true)); else notes.push(`No screen called "${arg}" is on.`);
+    } else if (verb === 'dim') { setDim(parseFloat(arg)); notes.push(`Screen dimmed to ${settings.dim}%.`); }
     else if (verb === 'bright' || verb === 'undim') setDim(0);
-    else if (verb === 'volume') setVolume(parseFloat(arg));
+    else if (verb === 'volume') { setVolume(parseFloat(arg)); notes.push(`Volume is ${settings.volume}.`); }
     else if (verb === 'clock') clockSoon = true;
+    else if (verb === 'announce') {
+      const msg = (parts[1] || '').replace(/\s*\(.*\)\s*$/, '');
+      const w = resolveWhere(arg);
+      if (!msg) notes.push('Announce needs a message.');
+      else if (!w.ids.length) notes.push(`Couldn't find ${w.missing.join(', ')} to announce on.`);
+      else { later(() => announce(msg, w.ids)); notes.push(`Announced on ${roomsOf(w.ids)}.`); }
+      if (w.missing.length && w.ids.length) notes.push(`No screen called ${w.missing.join(', ')}.`);
+    } else if (verb === 'tell') {
+      const d = findRoom(arg), msg = (parts[1] || '').replace(/\s*\(.*\)\s*$/, '');
+      if (!d) notes.push(`No screen called "${arg}" is on.`);
+      else if (!msg) notes.push('Tell needs a message.');
+      else { later(() => tellRoom(d, msg)); notes.push(`Went to ${devLabel(d)} to say it.`); }
+    } else if (verb === 'timer' || verb === 'alarm') {
+      const label = (parts[1] || (verb === 'timer' ? 'Timer' : 'Alarm')).slice(0, 40);
+      const at = verb === 'timer' ? (parseDuration(arg) ? now() + parseDuration(arg) : null) : parseAlarm(arg);
+      const w = resolveWhere(parts[2] || 'here');
+      if (!at) notes.push(`Couldn't read "${arg}" as a ${verb === 'timer' ? 'duration' : 'time'}.`);
+      else if (!w.ids.length) notes.push(`Couldn't find ${w.missing.join(', ')}.`);
+      else {
+        const c = setClock({ kind: verb, label, at, where: w.ids });
+        notes.push(`${verb === 'timer' ? 'Timer' : 'Alarm'} "${c.label}" set on ${roomsOf(c.where)}, ${verb === 'timer' ? `goes off in ${sayLeft(c.at - now())}` : `for ${new Date(c.at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}`}.`);
+        if (w.missing.length) notes.push(`No screen called ${w.missing.join(', ')}.`);
+      }
+    } else if (verb === 'cancel') {
+      const n = cancelClocks(arg);
+      notes.push(n ? `Cancelled ${n} ${n === 1 ? 'one' : 'of them'}.` : `Nothing called "${arg}" is set.`);
+    }
   }
-  if (pendingGo && !mouth.speaking) goNow();
+  if (!mouth.speaking) flushLater();
+  return { notes, more };
 }
+
+// Agent steps: if the model asked to continue (DO: continue), or one of its
+// actions didn't work, it gets a [System] turn with what happened and keeps
+// going, up to MAX_STEPS in a row.
+function nextStep(result) {
+  const failed = result.notes.some((n) => /^(no |couldn't|nothing|.* needs )/i.test(n));
+  if (!(result.more || failed) || agentSteps >= MAX_STEPS) { agentSteps = 0; return; }
+  agentSteps++;
+  const note = `Results: ${result.notes.join(' ') || 'done.'} These are done; don't repeat them. ${result.more ? 'Take your next step if one is left, otherwise just confirm briefly.' : 'Tell them briefly what went wrong, or fix it.'}`;
+  const go = () => runTurn(note, { name: 'System', id: null }, true);
+  if (mouth.speaking) later(go); else setTimeout(go, 300);
+}
+
 function findRoom(name) {
   const q = normalize(String(name || '')).replace(/^the /, '');
   if (!q) return null;
@@ -516,11 +617,7 @@ function findRoom(name) {
   return list.find((d) => normalize(d.room || '') === q) || list.find((d) => normalize(d.name || '') === q)
     || list.find((d) => normalize(`${d.room} ${d.name}`).includes(q) || q.includes(normalize(d.room || '\u0000')));
 }
-function goNow() {
-  const d = findRoom(pendingGo);
-  pendingGo = null;
-  if (d) sendTo(d, true);
-}
+
 // Send Caden to a device (rooms bar, or "go to the kitchen").
 function sendTo(d, quiet = false) {
   if (!d || d.id === holder.id) { if (!quiet) sfx.play('bump'); return; }
@@ -559,6 +656,128 @@ function stir() {
   if (document.documentElement.classList.contains('resting')) { document.documentElement.classList.remove('resting'); placeClock(); }
 }
 
+// ── announcements & telling a room ──────────────────────────────────────────
+function announce(text, ids) {
+  const from = me.room || me.name;
+  for (const id of ids) {
+    if (id === me.id) hearAnnouncement(text, from);
+    else mesh.send('announce', { text, from }, id);
+  }
+}
+function hearAnnouncement(text, from) {
+  if (document.hidden) { try { NativeApp()?.wake?.(); } catch { /* */ } }
+  sfx.unlock();
+  sfx.play('announce', { force: true });
+  notice({ icon: 'megaphone-simple', title: `Announcement${from && from !== (me.room || me.name) ? ` from the ${from}` : ''}`, body: text, ms: 20000 });
+  setTimeout(() => { ears.pause(); mouth.say(text); }, 1300);
+}
+function tellRoom(d, text) {
+  if (d.id === me.id && iHold()) { sfx.play('announce', { force: true }); setTimeout(() => { showSaid(text); say(text); }, 900); return; }
+  if (iHold()) giveTo(d.id, 'tell', null, text);
+  else mesh.send('announce', { text, from: me.room || me.name }, d.id);
+}
+
+// ── timers & alarms ──────────────────────────────────────────────────────────
+let clocks = new Map();        // id → { id, kind, label, at, where: [deviceIds], by }
+const ringing = new Map();     // id → { loop, started }
+function loadClocks() { clocks = new Map((home ? store.get('clocks.' + home.id, []) : []).map((c) => [c.id, c])); renderClocks(); }
+function saveClocks() { if (home) store.set('clocks.' + home.id, [...clocks.values()]); }
+function setClock(c, share = true) {
+  const clock = { id: c.id || uid(), kind: c.kind, label: c.label, at: c.at, where: c.where, by: c.by || me.room || me.name };
+  clocks.set(clock.id, clock);
+  saveClocks(); renderClocks();
+  if (share) mesh.send('clock', { op: 'set', clock });
+  return clock;
+}
+function cancelClocks(what) {
+  const q = normalize(String(what || ''));
+  const hit = [...clocks.values()].filter((c) => !q || /^(all|everything|every(thing| timer| alarm)?)$/.test(q) || normalize(c.label).includes(q) || q.includes(normalize(c.label)) || (q.includes('timer') && c.kind === 'timer' && !q.replace('timer', '').trim()) || (q.includes('alarm') && c.kind === 'alarm' && !q.replace('alarm', '').trim()));
+  for (const c of hit) stopClock(c.id);
+  return hit.length;
+}
+function stopClock(id, snooze = false, share = true) {
+  const c = clocks.get(id);
+  const r = ringing.get(id);
+  if (r) { clearInterval(r.loop); ringing.delete(id); }
+  if (c && snooze) { setClock({ ...c, at: now() + 5 * 60e3 }, share); hideNotice('clock-' + id); return; }
+  clocks.delete(id);
+  saveClocks(); renderClocks(); hideNotice('clock-' + id);
+  if (share) mesh.send('clock', { op: 'stop', id });
+}
+function onClockMessage(data) {
+  if (data.op === 'set' && data.clock?.id) setClock(data.clock, false);
+  else if (data.op === 'stop' && data.id) stopClock(data.id, false, false);
+  else if (data.op === 'all') for (const c of data.list || []) if (!clocks.has(c.id) && c.at > now() - 600e3) setClock(c, false);
+}
+function ring(c) {
+  if (ringing.has(c.id)) return;
+  if (document.hidden) { try { NativeApp()?.wake?.(); } catch { /* */ } }
+  sfx.unlock();
+  const sound = c.kind === 'alarm' ? 'alarm' : 'ring';
+  const started = now();
+  const play = () => sfx.play(sound, { force: true, gain: Math.min(1, 0.4 + ((now() - started) / 45000) * 0.6) });
+  play();
+  ringing.set(c.id, { loop: setInterval(play, c.kind === 'alarm' ? 3900 : 3500), started });
+  orb?.perk();
+  notice({
+    key: 'clock-' + c.id, icon: c.kind === 'alarm' ? 'alarm' : 'timer',
+    title: c.label || (c.kind === 'alarm' ? 'Alarm' : 'Timer'),
+    body: c.kind === 'alarm' ? new Date(c.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : 'Time is up.',
+    actions: [['Stop', () => stopClock(c.id), true], ...(c.kind === 'alarm' ? [['Snooze 5 min', () => stopClock(c.id, true)]] : [])],
+  });
+}
+function tickClocks() {
+  const t = now();
+  for (const c of clocks.values()) {
+    if (c.at <= t && c.where.includes(me.id) && !ringing.has(c.id)) ring(c);
+    if (c.at < t - 10 * 60e3) stopClock(c.id, false, false); // stop ringing after 10 minutes
+  }
+  renderClocks();
+}
+function clockLines() {
+  if (!clocks.size) return [];
+  return [...clocks.values()].sort((a, b) => a.at - b.at).map((c) => `${c.kind === 'timer' ? 'Timer' : 'Alarm'} "${c.label}" on ${roomsOf(c.where.filter((id) => liveDevices().some((d) => d.id === id))) || 'a screen that is off'}: ${ringing.has(c.id) ? 'ringing now' : c.kind === 'timer' ? `${sayLeft(c.at - now())} left` : new Date(c.at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}.`);
+}
+function renderClocks() {
+  const host = $('clocks');
+  if (!host) return;
+  const mine = [...clocks.values()].filter((c) => c.where.includes(me.id)).sort((a, b) => a.at - b.at).slice(0, 4);
+  const html = mine.map((c) => `<button class="clock-pill${ringing.has(c.id) ? ' ringing' : ''}" data-clock="${esc(c.id)}" aria-label="${esc(c.label)}, ${c.kind === 'timer' ? sayLeft(c.at - now()) + ' left' : 'alarm'}. Tap to cancel."><i class="ph ph-${c.kind === 'alarm' ? 'alarm' : 'timer'}" aria-hidden="true"></i><span>${esc(c.label)}</span><b>${c.kind === 'timer' ? showLeft(c.at - now()) : new Date(c.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</b></button>`).join('');
+  if (host.innerHTML !== html) {
+    host.innerHTML = html;
+    host.querySelectorAll('[data-clock]').forEach((b) => (b.onclick = () => { sfx.play('click'); stopClock(b.dataset.clock); }));
+  }
+}
+
+// ── the notice card: announcements and ringing timers ───────────────────────
+function notice({ key = 'n' + uid(), icon, title, body, actions = [], ms = 0 }) {
+  const host = $('notices');
+  hideNotice(key, true);
+  const el = document.createElement('div');
+  el.className = 'notice';
+  el.dataset.key = key;
+  el.setAttribute('role', 'alert');
+  el.innerHTML = `<i class="ph ph-${icon} notice-icon" aria-hidden="true"></i><div class="notice-text"><b>${esc(title)}</b><span>${esc(body)}</span></div><div class="notice-actions"></div>`;
+  const row = el.querySelector('.notice-actions');
+  for (const [label, fn, primary] of actions.length ? actions : [['OK', () => hideNotice(key)]]) {
+    const b = document.createElement('button');
+    b.className = 'btn' + (primary ? ' primary' : '');
+    b.textContent = label;
+    b.onclick = () => { sfx.play('click'); fn(); };
+    row.appendChild(b);
+  }
+  host.appendChild(el);
+  if (ms) setTimeout(() => hideNotice(key), ms);
+  return key;
+}
+function hideNotice(key, instant = false) {
+  const el = document.querySelector(`.notice[data-key="${CSS.escape(key)}"]`);
+  if (!el) return;
+  if (instant || reduced()) { el.remove(); return; }
+  el.classList.add('leaving');
+  setTimeout(() => el.remove(), 260);
+}
+
 function say(s) {
   ears.pause();
   mouth.say(s);
@@ -566,7 +785,7 @@ function say(s) {
 
 function afterSpeaking() {
   if (streaming) return;
-  if (pendingGo) { setTimeout(goNow, 400); }
+  if (afterSpeech.length) flushLater();
   ears.resume();
   if (!iHold()) return;
   activity = now();
@@ -923,6 +1142,7 @@ mesh.addEventListener('msg', (e) => {
       beat();
       sharePeople(from);
       if (iHold()) mesh.send('turns', { list: turns.slice(-30) }, from);
+      if (clocks.size) mesh.send('clock', { op: 'all', list: [...clocks.values()] }, from);
       break;
     case 'bye':
       devices.delete(from);
@@ -932,6 +1152,8 @@ mesh.addEventListener('msg', (e) => {
     case 'turn': mergeTurn(data.turn); break;
     case 'turns': for (const t of data.list || []) mergeTurn(t); break;
     case 'claim': onClaim(from, data); break;
+    case 'announce': if (data.text) hearAnnouncement(String(data.text).slice(0, 400), String(data.from || '').slice(0, 40)); break;
+    case 'clock': onClockMessage(data); break;
     case 'sendto': if (iHold() && data.to) { const d = liveDevices().find((x) => x.id === data.to); if (d) sendTo(d); } break;
     case 'heard': onRemoteHeard(from, data.score); break;
     case 'handoff': onHandoff(from, data); break;
@@ -978,6 +1200,7 @@ async function enterHome(code) {
   store.set('home', home);
   applyVoice(); // the voice function wants the home id
   loadTurns();
+  loadClocks();
   joinedAt = now();
   await mesh.join(code);
   applyKeepAlive();
@@ -1243,6 +1466,33 @@ function wakeCard() {
   </div>`;
 }
 
+// Quality: Auto / Low / Medium / High. Same animations everywhere; lower levels
+// draw the wave with fewer strands at a lower resolution and drop the blur.
+const QUALITIES = ['auto', 'low', 'medium', 'high'];
+const QUALITY_NOTE = {
+  auto: (l) => `Picks for this device and steps down if it struggles. Now: ${l}.`,
+  low: () => 'For older or slower screens. Solid panels, a lighter wave at 30 frames a second.',
+  medium: () => 'A lighter wave and softer glass.',
+  high: () => 'Full glass and the full wave.',
+};
+function qualityCard() {
+  const i = QUALITIES.indexOf(settings.quality);
+  const level = document.documentElement.dataset.quality || 'high';
+  return `<div class="card"><h3>Display</h3>
+    <div class="quality">
+      <label for="sQuality" class="sr">Quality</label>
+      <input type="range" id="sQuality" min="0" max="3" step="1" value="${i < 0 ? 0 : i}" aria-valuetext="${settings.quality}">
+      <div class="stops" aria-hidden="true">${QUALITIES.map((q, k) => `<span class="${k === i ? 'on' : ''}">${q[0].toUpperCase() + q.slice(1)}</span>`).join('')}</div>
+      <p class="fine" id="qualityNote" style="margin:0">${QUALITY_NOTE[settings.quality](level)}</p>
+    </div>
+  </div>`;
+}
+function refreshQuality() {
+  const note = $('qualityNote');
+  if (note) note.textContent = QUALITY_NOTE[settings.quality](document.documentElement.dataset.quality || 'high');
+  document.querySelectorAll('.quality .stops span').forEach((el, k) => el.classList.toggle('on', QUALITIES[k] === settings.quality));
+}
+
 function toggleRow(key, label, sub) {
   return `<label class="line"><span class="grow">${label}<small>${sub}</small></span><input type="checkbox" class="toggle" data-set="${key}" ${settings[key] ? 'checked' : ''}></label>`;
 }
@@ -1266,6 +1516,7 @@ function panel(tab) {
         <div class="field"><label for="sRoom">Room</label><input class="input" id="sRoom" value="${esc(me.room)}" maxlength="24" list="roomList"><datalist id="roomList">${ROOMS.map((r) => `<option value="${r}">`).join('')}</datalist></div>
         <button class="btn small primary" data-act="saveDevice">Save</button>
       </div>
+      ${qualityCard()}
       ${NativeApp()?.wake ? wakeCard() : ''}
       <div class="card"><h3>Devices (${devs.length})</h3>
         ${devs.map((d) => `<div class="line"><span class="avatar" style="background:var(--bg2);color:var(--ink)">${roomIcon(d.room)}</span><span class="grow"><b>${esc(d.room || d.name)}</b><small>${esc(d.name)}, ${d.kind === 'app' ? 'Android app' : 'web'}</small>${d.sees ? `<small>Sees ${esc(d.sees.name)}</small>` : ''}</span>${linkBadge(d.id)}${d.id === me.id ? '<span class="badge soft">This one</span>' : ''}${d.id === holder.id ? '<span class="badge">Caden</span>' : ''}</div>`).join('')}
@@ -1368,6 +1619,16 @@ function bindPanel(host) {
   if (eng) eng.onchange = () => { settings.engine = eng.value; saveSettings(); if (settings.mic) { ears.stop(); ears.start(settings.engine); } };
   const qrBox = host.querySelector('#qrShow');
   if (qrBox && !qrBox.hidden) qrSvg(qrBox.dataset.link).then((svg) => { qrBox.innerHTML = svg; }).catch(() => { qrBox.textContent = 'Couldn\'t draw the QR code. Use Copy link instead.'; });
+  const ql = host.querySelector('#sQuality');
+  if (ql) ql.oninput = () => {
+    const q = QUALITIES[Number(ql.value)] || 'auto';
+    if (q === settings.quality) return;
+    settings.quality = q; saveSettings();
+    ql.setAttribute('aria-valuetext', q);
+    sfx.play('tick', { dir: 1 });
+    orb.setQuality(q);
+    refreshQuality();
+  };
   const vol = host.querySelector('#sSfxVol');
   if (vol) vol.oninput = () => { settings.sfxVol = Number(vol.value); sfx.setVolume(settings.sfxVol); saveSettings(); };
   const nv = host.querySelector('#sNvVoice');
@@ -1466,6 +1727,7 @@ function stopEnroll() {
 // ── ticks ────────────────────────────────────────────────────────────────────
 setInterval(() => {
   tickClock();
+  tickClocks();
   const was = document.documentElement.classList.contains('resting');
   document.documentElement.classList.toggle('resting', isResting());
   if (was !== document.documentElement.classList.contains('resting')) placeClock();
@@ -1481,7 +1743,9 @@ addEventListener('resize', () => renderDock());
 // ── boot ─────────────────────────────────────────────────────────────────────
 function boot() {
   orb = new Wave($('wave'));            // Caden is the wave
-  orb.speech = () => mouth.level();      // speaking swells it with the real voice
+  orb.speech = () => mouth.speech();      // speaking swells it with the real voice
+  orb.onLevel = (level) => { document.documentElement.dataset.quality = level; if (sheetTab === 'home' && $('sheetHost').firstElementChild) refreshQuality(); };
+  orb.setQuality(settings.quality);
   orb.mirror = $('orb'); orb.set('idle');
   miniOrb = quietOrb;
   miniOrb.set('sleepy');
@@ -1515,6 +1779,7 @@ function boot() {
   mouth.rate = settings.rate;
   applyVolume(); applyDim();
   for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, stir, { capture: true, passive: true });
+  addEventListener('keydown', (e) => { if (e.key === 'Escape' && ringing.size) for (const id of [...ringing.keys()]) stopClock(id); });
   where().catch(() => {});
   mouth.voiceName = settings.voice;
   applyVoice();
@@ -1523,7 +1788,7 @@ function boot() {
   stopEnroll();
   air = new AirNav();
   air.onPress = () => sfx.play('click');
-  if (/[?&]debug\b/.test(location.search)) window.__caden = { wheel: () => wheel, setWide: (v) => setWide(v), appendSaid: (t) => appendSaid(t), hands, air, settings, mesh, meter, sfx, onHeard, holder: () => holder, lastLocate: () => lastLocate, runActions: (f, t) => runActions(f, t), rest: () => { activity = 0; } }; // test hook
+  if (/[?&]debug\b/.test(location.search)) window.__caden = { wheel: () => wheel, setWide: (v) => setWide(v), appendSaid: (t) => appendSaid(t), hands, air, settings, mesh, meter, sfx, onHeard, holder: () => holder, lastLocate: () => lastLocate, runActions: (f, t) => runActions(f, t), mouth, wave: () => orb, clocks: () => clocks, ringing: () => ringing, announce: (t, ids) => announce(t, ids), resolveWhere: (t) => resolveWhere(t), runTurn: (t, w, s) => runTurn(t, w, s), rest: () => { activity = 0; } }; // test hook
   // #display boots straight into touch-free mode (kiosk screens).
   if (/(^|[#&])display\b/.test(location.hash)) { settings.display = true; saveSettings(); }
   applyDisplay();

@@ -170,6 +170,39 @@ export class Ears extends EventTarget {
 }
 
 // ── Speaking ─────────────────────────────────────────────────────────────────
+// ── the shape of real speech ────────────────────────────────────────────────
+// Decode a clip once and keep, every 10 ms, how loud it is (RMS, normalized to
+// the clip's loud parts, with a little attack/release so it reads as breath
+// not flicker) and how bright (zero-crossing rate: vowels are low, s / f / t
+// are high).
+const FPS = 100;
+let decoder = null;
+async function speechTrack(blob) {
+  const AC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  if (!AC) return null;
+  decoder = decoder || new AC(1, 1, 24000);
+  const buf = await decoder.decodeAudioData(await blob.arrayBuffer());
+  const d = buf.getChannelData(0), sr = buf.sampleRate, hop = Math.round(sr / FPS);
+  const n = Math.ceil(d.length / hop);
+  const env = new Float32Array(n), zcr = new Float32Array(n);
+  for (let f = 0; f < n; f++) {
+    let s = 0, z = 0; const a = f * hop, b = Math.min(d.length, a + hop * 2);
+    for (let i = a; i < b; i++) { s += d[i] * d[i]; if (i > a && (d[i] >= 0) !== (d[i - 1] >= 0)) z++; }
+    env[f] = Math.sqrt(s / Math.max(1, b - a));
+    zcr[f] = z / Math.max(1, b - a);
+  }
+  const sorted = Array.from(env).sort((x, y) => x - y);
+  const loud = sorted[Math.floor(sorted.length * 0.95)] || 1;
+  let e = 0;
+  for (let f = 0; f < n; f++) {
+    const v = Math.min(1, env[f] / loud);
+    e += (v - e) * (v > e ? 0.6 : 0.18); // quick to rise, slower to fall
+    env[f] = e;
+    zcr[f] = Math.min(1, Math.max(0, (zcr[f] - 0.02) / 0.25));
+  }
+  return { env, zcr };
+}
+
 export class Mouth extends EventTarget {
   constructor() {
     super();
@@ -241,7 +274,9 @@ export class Mouth extends EventTarget {
     const { url, headers, voice, lang } = this.nv;
     const r = await fetch(url, { method: 'POST', headers, signal, body: JSON.stringify({ text, voice, lang }) });
     if (!r.ok) { let e = `voice ${r.status}`; try { e = (await r.json()).error || e; } catch { /* not json */ } throw new Error(e); }
-    return r.blob();
+    const blob = await r.blob();
+    blob.track = await speechTrack(blob).catch(() => null); // the wave reads this while it plays
+    return blob;
   }
 
   stop() {
@@ -249,6 +284,7 @@ export class Mouth extends EventTarget {
     this.queue = [];
     this.cur = null;
     if (this.audio) { this.audio.pause(); this.audio.onended = this.audio.onerror = null; }
+    this.track = null;
     if (Native()) Native().stopSpeaking();
     else window.speechSynthesis?.cancel();
     if (this.busy) { this.busy = false; this._emit('end'); }
@@ -280,32 +316,21 @@ export class Mouth extends EventTarget {
     this._device(item.text, id);
   }
 
-  // How loud Caden's voice is right now (0..1), for the wave. Needs a running
-  // AudioContext (set by the app after the first tap); otherwise 0 and the
-  // wave falls back to syllable pulses.
-  level() {
-    if (!this._an || !this.busy || this.audio?.paused) return 0;
-    const b = this._buf || (this._buf = new Float32Array(this._an.fftSize));
-    this._an.getFloatTimeDomainData(b);
-    let s = 0; for (const v of b) s += v * v;
-    return Math.min(1, Math.sqrt(s / b.length) * 4);
+  // Caden's voice right now, for the wave: { level 0..1, bright 0..1 } read
+  // from the clip's own envelope at the playback position (see speechTrack),
+  // so the wave moves with the real speech. null when nothing real is playing
+  // (the device voice has no audio we can read; the wave uses word pulses then).
+  speech() {
+    const tr = this.track, a = this.audio;
+    if (!tr || !this.busy || !a || a.paused) return null;
+    const i = Math.max(0, Math.min(tr.env.length - 1, Math.round((a.currentTime + 0.03) * FPS)));
+    return { level: tr.env[i], bright: tr.zcr[i] };
   }
-
-  _meter(a) {
-    const ctx = this.audioCtx;
-    if (this._an || !ctx || ctx.state !== 'running') return;
-    try {
-      const src = ctx.createMediaElementSource(a);
-      this._an = ctx.createAnalyser();
-      this._an.fftSize = 1024;
-      src.connect(this._an);
-      this._an.connect(ctx.destination);
-    } catch { /* already routed or not allowed: no meter */ }
-  }
+  level() { return this.speech()?.level || 0; }
 
   async _play(blob, id) {
     const a = this._player();
-    this._meter(a);
+    this.track = blob.track || null;
     const url = URL.createObjectURL(blob);
     const done = () => { URL.revokeObjectURL(url); a.onended = a.onerror = null; this._done(id); };
     a.onended = done;
