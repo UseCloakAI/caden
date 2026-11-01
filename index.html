@@ -74,9 +74,11 @@
 
     <div class="step" data-step="join" hidden>
       <h1>Join a home</h1>
-      <p>Open Settings on a device that already has Caden and type its home code here.</p>
-      <div class="field"><label for="joinCode">Home code</label><input class="input" id="joinCode" placeholder="sunny-otter-42" autocapitalize="off" autocomplete="off" spellcheck="false"></div>
-      <div class="row"><button class="btn ghost" data-go="hello">Back</button><button class="btn primary" id="btnJoin">Join</button></div>
+      <p>On a screen that already has Caden, open Settings and tap Show QR code. Then scan it here.</p>
+      <div class="cam-box qr-box" id="qrBox" hidden><span class="qr-frame" aria-hidden="true"></span><span class="qr-hint">Point at the QR code</span></div>
+      <button class="btn primary" id="btnScan" type="button"><i class="ph ph-qr-code" aria-hidden="true"></i>Scan QR code</button>
+      <div class="field"><label for="joinCode">Or type the home code</label><input class="input" id="joinCode" placeholder="sunny-otter-42" autocapitalize="off" autocomplete="off" spellcheck="false"></div>
+      <div class="row"><button class="btn ghost" data-go="hello">Back</button><button class="btn" id="btnJoin">Join</button></div>
     </div>
 
     <div class="step" data-step="device" hidden>

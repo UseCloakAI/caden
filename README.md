@@ -42,6 +42,23 @@ For a screen with a webcam (wall display, kitchen laptop, TV box): Settings → 
 
 Targets get bigger, the type box hides, and a small hand preview (drawn from landmarks, never the camera image) shows you're being tracked. External links are not pressable, so a kiosk can't navigate away. Faces and hands share one camera stream (`js/camera.js`). For an unattended kiosk, launch Chrome with `--autoplay-policy=no-user-gesture-required` so Caden can speak without a first tap.
 
+### Joining a home
+
+Settings → Home → **Show QR code** on any screen that's already in the home. It encodes the invite link (`https://usecloakai.github.io/caden/#join=<code>`), so either:
+
+- open Caden on the new device → Join my home → **Scan QR code** (uses `BarcodeDetector` where available, else the vendored jsQR; rear camera on phones), or
+- point any phone's camera at it, which opens Caden with the code filled in.
+
+The QR is the home's encryption key, so it stays hidden until asked for and hides itself after 2 minutes. Typing the code still works.
+
+### Voice
+
+Caden speaks with **NVIDIA Magpie TTS Multilingual** through the `voice` edge function (a small gRPC client, since Riva has no REST API), prefetching each sentence while the previous one plays. If NVIDIA is unreachable it falls back to the device's own voice, sentence by sentence. Settings → Voice switches between the two and picks the Magpie voice. Needs the `NVIDIA_API_KEY` secret (a free build.nvidia.com key) on the Caden Supabase project. (NVIDIA deprecated Magpie TTS Flow; its replacement, Zeroshot, needs access approval, so voice cloning isn't used.)
+
+### Finding you by voice
+
+Every screen keeps a loudness meter (auto gain control off). When several screens hear "Hey Caden", each scores how loud it was against its own **calibration** (Settings → Voice → Calibrate: stand next to it and say "Hey Caden"), shares the score over the mesh, and the loudest takes Caden and the command after 700 ms; the rest stand down. Calibration cancels out different mics, so a hot mic across the room doesn't beat a quiet one next to you. Settings shows the last decision with each screen's score.
+
 ### LAN links
 
 Every device opens a direct WebRTC data channel to every other device in the home (`js/lan.js`). On the same network that's a host-to-host connection: messages arrive in about **1 ms** instead of a cloud round trip (41-49 ms from a datacenter in testing, more from a home connection). Handoffs, claims, turns and face syncs go over the links; heartbeats go over both, so a device that just joined still finds everyone.
@@ -70,6 +87,10 @@ icons/ph/             Phosphor icon font, vendored (MIT)
 js/app.js             the agent: holder election, handoffs, turns, voice loop, settings
 js/mesh.js            encrypted messaging: LAN links first, then BroadcastChannel / Realtime relay
 js/lan.js             WebRTC data channels between devices, path + ping
+js/locate.js          loudness meter + nearest-screen scoring for "Hey Caden"
+js/qr.js              join QR: draw (qrcode-generator) and scan (BarcodeDetector / jsQR)
+js/vendor/            qrcode-generator (MIT), jsQR (Apache-2.0)
+supabase/functions/voice/  NVIDIA Magpie TTS over gRPC → WAV
 js/faces.js           face detection / recognition / enrollment
 js/voice.js           ears, mouth, wake-word matching
 js/brain.js           brain client (Supabase edge function, Cloak fallback)

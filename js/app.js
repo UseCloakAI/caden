@@ -7,7 +7,8 @@
 // isn't mid-turn, and sends `handoff` with a bumped epoch. Saying "Hey Caden"
 // to any device summons it there right away. Highest epoch wins; ties go to
 // the lower device id, so two devices can never both keep it.
-import { TUNING, DEFAULT_WAKE, SB_URL, SB_KEY, NV_VOICE } from './config.js';
+import { TUNING, DEFAULT_WAKE, SB_URL, SB_KEY, NV_VOICE, PUBLIC_URL } from './config.js';
+import { qrSvg, QrScanner } from './qr.js';
 import { store, uid, device, newHomeCode, normCode } from './store.js';
 import { Mesh } from './mesh.js';
 import { Faces } from './faces.js';
@@ -58,6 +59,7 @@ const ears = new Ears();
 const mouth = new Mouth();
 const faces = new Faces($('cam'));
 const hands = new Hands();
+const qrScan = new QrScanner($('cam'));
 const meter = new Meter(); // wake-word loudness, for finding the nearest device
 let air = null; // AirNav, built at boot (needs the DOM)
 let orb, miniOrb, setupOrb;
@@ -792,6 +794,7 @@ addEventListener('pagehide', () => { if (!home) return; if (iHold()) handOffBefo
 // ── onboarding ───────────────────────────────────────────────────────────────
 let draft = null, draftNew = false;
 function showStep(name) {
+  if (name !== 'join' && qrScan.on) stopScan();
   document.querySelectorAll('.step').forEach((s) => { s.hidden = s.dataset.step !== name; });
   setupOrb?.hop();
   if (name === 'device') {
@@ -820,6 +823,38 @@ document.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click'
   }
   showStep(go);
 }));
+// Scan a join QR (shown in Settings on a device that's already in the home).
+function stopScan() {
+  qrScan.stop();
+  $('qrBox').hidden = true;
+  $('btnScan').innerHTML = '<i class="ph ph-qr-code" aria-hidden="true"></i>Scan QR code';
+  stopEnroll(); // puts the camera <video> back where it lives
+}
+$('btnScan').onclick = async () => {
+  if (qrScan.on) { stopScan(); return; }
+  const box = $('qrBox'), vid = $('cam');
+  box.hidden = false;
+  box.prepend(vid);
+  vid.hidden = false;
+  vid.className = '';
+  $('btnScan').innerHTML = '<i class="ph ph-x" aria-hidden="true"></i>Stop scanning';
+  try {
+    await qrScan.start((code) => {
+      stopScan();
+      $('joinCode').value = code;
+      toast(`Found ${code}`);
+      draft = code;
+      draftNew = false;
+      showStep('device');
+    });
+    // Mirror the preview only for a front camera, so it feels natural.
+    const s = vid.srcObject?.getVideoTracks?.()[0]?.getSettings?.() || {};
+    box.classList.toggle('mirror', s.facingMode !== 'environment');
+  } catch (e) {
+    stopScan();
+    toast(e?.name === 'NotAllowedError' ? 'Camera is blocked. Type the code instead.' : 'No camera here. Type the code instead.');
+  }
+};
 $('btnJoin').onclick = () => {
   const c = normCode($('joinCode').value);
   if (c.length < 4) { $('joinCode').focus(); return; }
@@ -893,6 +928,7 @@ syncFull();
 
 // ── settings sheet ───────────────────────────────────────────────────────────
 let sheetTab = null;
+let qrUntil = 0, qrT = null; // join QR is shown on request, then hides itself
 function openSheet(tab) { sheetTab = tab; renderSheet(); }
 function closeSheet() {
   sheetTab = null;
@@ -943,13 +979,17 @@ function toggleRow(key, label, sub) {
 
 function panel(tab) {
   if (tab === 'home') {
-    const link = `${location.origin}${location.pathname}#join=${home.code}`;
+    const link = `${PUBLIC_URL}#join=${home.code}`;
+    const showQr = now() < qrUntil;
     const devs = liveDevices();
     return `
       <div class="card"><h3>Home code</h3>
         <div class="code">${esc(home.code)}</div>
         <p class="fine" style="margin:0">Type this on another phone, tablet or laptop to add it to your home. Everything between your devices is encrypted with it.</p>
-        <div class="row"><button class="btn small" data-act="copy" data-v="${esc(link)}">Copy invite link</button><button class="btn small ghost danger" data-act="leave">Leave home</button></div>
+        <div class="qr-show" id="qrShow" ${showQr ? '' : 'hidden'} data-link="${esc(link)}"></div>
+        ${showQr ? '<p class="fine" style="margin:0">Scan it in Caden\'s Join screen, or with any phone camera. Anyone who scans it can join, so it hides itself in 2 minutes.</p>' : ''}
+        <div class="row"><button class="btn small ${showQr ? '' : 'primary'}" data-act="qr"><i class="ph ph-qr-code" aria-hidden="true"></i>${showQr ? 'Hide QR code' : 'Show QR code'}</button><button class="btn small" data-act="copy" data-v="${esc(link)}">Copy link</button></div>
+        <button class="btn small ghost danger" data-act="leave">Leave home</button>
       </div>
       <div class="card"><h3>This device</h3>
         <div class="field"><label for="sName">Name</label><input class="input" id="sName" value="${esc(me.name)}" maxlength="24"></div>
@@ -1042,6 +1082,8 @@ function bindPanel(host) {
   }));
   const eng = host.querySelector('#sEngine');
   if (eng) eng.onchange = () => { settings.engine = eng.value; saveSettings(); if (settings.mic) { ears.stop(); ears.start(settings.engine); } };
+  const qrBox = host.querySelector('#qrShow');
+  if (qrBox && !qrBox.hidden) qrSvg(qrBox.dataset.link).then((svg) => { qrBox.innerHTML = svg; }).catch(() => { qrBox.textContent = 'Couldn\'t draw the QR code. Use Copy link instead.'; });
   const nv = host.querySelector('#sNvVoice');
   if (nv) nv.onchange = () => { settings.nvVoice = nv.value; saveSettings(); applyVoice(); };
   if (host.querySelector('#nvVoiceNote')) loadNvVoices().then(() => { if (sheetTab === 'voice') renderSheet(); })
@@ -1067,6 +1109,12 @@ async function act(a, el) {
     const w = $('sWake').value.split(',').map((x) => normalize(x)).filter((x) => x.length > 2);
     settings.wake = w.length ? w : DEFAULT_WAKE;
     saveSettings(); renderSheet(); toast('Wake words saved');
+  }
+  if (a === 'qr') {
+    qrUntil = now() < qrUntil ? 0 : now() + 120000;
+    clearTimeout(qrT);
+    if (qrUntil) qrT = setTimeout(() => { qrUntil = 0; if (sheetTab === 'home') renderSheet(); }, 120000);
+    renderSheet();
   }
   if (a === 'calibrate') { if (calibrating) { calibrating = null; renderSheet(); } else startCalibration(); }
   if (a === 'engine') { settings.voiceEngine = el.dataset.v; saveSettings(); applyVoice(); warnedVoice = false; renderSheet(); }

@@ -7,15 +7,20 @@ const users = new Set();
 
 export const video = () => document.getElementById('cam');
 
-export async function acquire(user) {
+// facing: 'user' (front, default) or 'environment' (back: for scanning a QR on
+// another screen). Only applies when the stream opens; reopen to switch.
+export const facing = () => currentFacing;
+let currentFacing = 'user';
+export async function acquire(user, { facing = 'user' } = {}) {
   users.add(user);
   if (stream) return stream;
   if (!opening) {
     opening = navigator.mediaDevices.getUserMedia({
       // 640x480: enough for pose at couch distance; face-api downsamples anyway.
-      video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: false,
+      video: { facingMode: facing, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false,
     }).then(async (s) => {
       stream = s;
+      currentFacing = facing;
       const v = video();
       v.srcObject = s;
       await v.play().catch(() => {});

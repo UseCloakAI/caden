@@ -398,3 +398,14 @@ html.air-pointing .air-guide { opacity: .35; }
 .locate-result span { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: var(--pill); background: var(--bg2); font-weight: 700; font-size: 13px; color: var(--ink2); }
 .locate-result span.win { background: color-mix(in oklab, var(--coral) 18%, var(--card)); color: var(--ink); }
 .locate-result b { color: var(--acc-ink); }
+
+/* QR join: shown in Settings → Home, scanned on the Join screen */
+.qr-show { width: min(240px, 70%); aspect-ratio: 1; justify-self: center; padding: 10px; border-radius: var(--r-sm); background: #FFFFFF; box-shadow: var(--sh); animation: popIn var(--t-slow) var(--e-pop) both; }
+.qr-show svg { display: block; width: 100%; height: 100%; }
+.qr-box video { scale: 1 1; }
+.qr-box.mirror video { scale: -1 1; }
+.qr-box .qr-frame { position: absolute; inset: 14% 22%; border: 4px solid rgba(255, 255, 255, .9); border-radius: var(--r-sm); box-shadow: 0 0 0 999px rgba(20, 14, 30, .35); animation: qrPulse 1.6s var(--e-sine) infinite; }
+.qr-box .qr-hint { position: absolute; left: 0; right: 0; bottom: 10px; text-align: center; color: #FFFFFF; font-weight: 800; font-size: 14px; text-shadow: 0 1px 4px rgba(0, 0, 0, .5); }
+@keyframes qrPulse { 50% { scale: 1.03; } }
+/* during setup there's no dock: keep toasts clear of the primary button */
+.setup:not([hidden]) ~ .toast { top: max(16px, env(safe-area-inset-top)); bottom: auto; }
