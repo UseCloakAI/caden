@@ -38,3 +38,21 @@ export function release(user) {
   const v = video();
   if (v) v.srcObject = null;
 }
+
+// One still from the camera, as base64 JPEG (for Caden to look, DO: look).
+// Opens the camera just for this if nothing else is using it.
+export async function still(maxSide = 768) {
+  await acquire('look');
+  try {
+    const v = video();
+    const t0 = Date.now();
+    while ((v.readyState < 2 || !v.videoWidth) && Date.now() - t0 < 4000) await new Promise((r) => setTimeout(r, 100));
+    if (!v.videoWidth) throw new Error('camera has no picture');
+    await new Promise((r) => setTimeout(r, 250)); // let exposure settle on a fresh open
+    const k = Math.min(1, maxSide / Math.max(v.videoWidth, v.videoHeight));
+    const c = document.createElement('canvas');
+    c.width = Math.round(v.videoWidth * k); c.height = Math.round(v.videoHeight * k);
+    c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+    return { data: c.toDataURL('image/jpeg', 0.8).split(',')[1], mime: 'image/jpeg' };
+  } finally { release('look'); }
+}

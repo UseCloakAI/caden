@@ -1,3 +1,4 @@
+import { spoken } from './spoken.js';
 // Voice — hearing (wake word + commands) and speaking.
 // Hearing engines, best first:
 //   native   the Android app's SpeechRecognizer (window.CadenNative)
@@ -257,7 +258,8 @@ export class Mouth extends EventTarget {
   }
 
   say(text) {
-    const t = String(text || '').replace(/[*_#`>~]|\[(?:[^\]]{1,24})\]\s*/g, '').trim();
+    // spoken(): times, temperatures, units, money... the way a person says them
+    const t = spoken(String(text || '').replace(/[*_#`>~]|\[(?:[^\]]{1,24})\]\s*/g, '').trim());
     if (!t) return;
     const item = { text: t };
     // Start synthesizing now, so it overlaps whatever is playing.

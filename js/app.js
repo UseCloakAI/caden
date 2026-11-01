@@ -22,6 +22,7 @@ import { AirNav } from './airnav.js';
 import { Meter, score, pickLoudest } from './locate.js';
 import { sfx } from './sfx.js';
 import { where } from './where.js';
+import { still } from './camera.js';
 import { parseDuration, parseAlarm, sayLeft, showLeft } from './clocks.js';
 
 const $ = (id) => document.getElementById(id);
@@ -307,7 +308,11 @@ function renderOrb() {
 }
 
 // ── hearing ──────────────────────────────────────────────────────────────────
+// followUpOpen: listening on after an answer, no wake word needed, so what
+// comes in might be people talking to each other, not to Caden.
+let followUpOpen = false, endConversation = false;
 function listenNow() {
+  followUpOpen = false;
   if (iHold() && !(mode === 'command' && now() < modeUntil)) sfx.play('wake');
   if (iHold() && !(mode === 'command' && now() < modeUntil)) orb?.perk(); // heard you
   mode = 'command';
@@ -432,7 +437,9 @@ function handleCommand(text) {
 const STOP = /^(stop|cancel|never ?mind|be quiet|shh+|quiet|that's all|thanks that's all|nothing)\W*$/i;
 
 // ── a turn ───────────────────────────────────────────────────────────────────
-async function runTurn(text, who, step = false) {
+async function runTurn(text, who, step = false, images = null) {
+  const overheard = !step && followUpOpen;
+  followUpOpen = false;
   if (!iHold()) return;
   activity = now();
   turnCtrl?.abort();
@@ -473,12 +480,14 @@ async function runTurn(text, who, step = false) {
     room: me.room, device: me.name, place,
     rooms: liveDevices().map((d) => d.room || d.name),
     clocks: clockLines(),
+    overheard,
+    asked: (() => { const r = stripRemember(turns.filter((t) => t.id !== turn.id).at(-1)?.reply || '').trim(); const q = r.match(/[^.!?]*\?\s*$/); return q ? q[0].trim().slice(0, 160) : ''; })(),
     people: alive().map((p) => p.name),
     here: freshSight() ? [lastSight.person.name] : [],
   });
   try {
     const full = await think({
-      home: home.id, turn, turns, system: context, where: place, signal: ctrl.signal,
+      home: home.id, turn, turns, system: context, where: place, images, signal: ctrl.signal,
       onSentence: (raw) => {
         const s = speakable(raw);
         if (ctrl.signal.aborted || !s || HIDDEN_LINE.test(s)) return;
@@ -490,6 +499,11 @@ async function runTurn(text, who, step = false) {
     turn.reply = stripRemember(full) || '…';
     const recent = [text, ...turns.slice(-3).filter((t) => t.whoId || t.who !== 'System').map((t) => t.text)].join(' ');
     var stepResult = runActions(splitActions(full), recent);
+    if (stepResult.ignored) {
+      $('capYou').innerHTML = ''; $('capSaid').textContent = '';
+      turn.reply = '';
+      if (!mouth.speaking) { endConversation = false; mode = 'wait'; setPhase('idle'); }
+    }
     if (holdSpeech) {
       if (stepResult.announcedHere) setPhase('idle');
       else for (const h of held) { appendSaid(h); say(h); }
@@ -558,7 +572,7 @@ const roomsOf = (ids) => ids.map((id) => devLabel(liveDevices().find((d) => d.id
 // Run the DO: lines of a reply. Returns what happened, for the next agent step.
 function runActions(full, said = '') {
   const notes = [];
-  let more = false, announcedHere = false;
+  let more = false, announcedHere = false, ignored = false, look = false;
   const lines = String(full || '').split('\n');
   // "tell <room>" already takes Caden there; drop a "go" to the same room
   const told = new Set(lines.map((l) => l.match(/^\s*DO:\s*tell\s+([^|]+)\|/i)?.[1]).filter(Boolean).map((r) => findRoom(r.trim())?.id).filter(Boolean));
@@ -572,6 +586,9 @@ function runActions(full, said = '') {
     const kind = verb === 'bright' || verb === 'undim' ? 'dim' : verb;
     if (ASKED[kind] && !ASKED[kind].test(said)) continue;
     if (verb === 'continue') { more = true; continue; }
+    if (verb === 'look') { look = true; continue; } // Caden wants to see: one still, then its next step
+    if (verb === 'ignore') { endConversation = true; ignored = true; continue; } // not meant for Caden: stay silent
+    if (verb === 'done') { endConversation = true; continue; }                    // conversation over: stop listening
     if (verb === 'go') {
       const d = findRoom(arg);
       if (d && told.has(d.id)) continue;
@@ -612,13 +629,28 @@ function runActions(full, said = '') {
     }
   }
   if (!mouth.speaking) flushLater();
-  return { notes, more, announcedHere };
+  return { notes, more, announcedHere, ignored, look };
 }
 
 // Agent steps: if the model asked to continue (DO: continue), or one of its
 // actions didn't work, it gets a [System] turn with what happened and keeps
 // going, up to MAX_STEPS in a row.
 function nextStep(result) {
+  if (result.look && agentSteps < MAX_STEPS) {
+    agentSteps++;
+    const go = async () => {
+      let img = null, why = '';
+      notice({ key: 'look', icon: 'camera', title: 'Looking', body: 'One picture, just for this answer.', ms: 2500 });
+      try { img = await still(); } catch (e) { why = String(e.message || e); }
+      const asked = [...turns].reverse().find((t) => t.who !== 'System')?.text || '';
+      const note = img
+        ? `Results: the picture attached is what this screen's camera sees right now. They asked: "${asked}". ${result.notes.join(' ')} You're already looking, so don't say "let me look". Answer from what is actually in the picture, briefly; if you can't make it out, say so instead of guessing. Don't look again unless they ask.`
+        : `Results: couldn't get a picture (${why || 'no camera'}). Tell them briefly.`;
+      runTurn(note, { name: 'System', id: null }, true, img ? [img] : null);
+    };
+    if (mouth.speaking) later(go); else setTimeout(go, 200);
+    return;
+  }
   const failed = result.notes.some((n) => /^(no |couldn't|nothing|.* needs )/i.test(n));
   if (!(result.more || failed) || agentSteps >= MAX_STEPS) { agentSteps = 0; return; }
   agentSteps++;
@@ -828,7 +860,9 @@ function afterSpeaking() {
   activity = now();
   // A while after a long answer, step back to the middle.
   if (wide) { clearTimeout(wideT); wideT = setTimeout(() => { if (!streaming && !mouth.speaking && phase !== 'thinking') setWide(false); }, 25000); }
-  if (settings.followUp && phase !== 'idle') { mode = 'command'; modeUntil = now() + TUNING.followUpMs; setPhase('listening'); }
+  // the model said the conversation is over (DO: done) or that wasn't for it (DO: ignore)
+  if (endConversation) { endConversation = false; followUpOpen = false; mode = 'wait'; setPhase('idle'); return; }
+  if (settings.followUp && phase !== 'idle') { mode = 'command'; modeUntil = now() + TUNING.followUpMs; followUpOpen = true; setPhase('listening'); }
   else setPhase('idle');
 }
 
@@ -1845,7 +1879,7 @@ function boot() {
   stopEnroll();
   air = new AirNav();
   air.onPress = () => sfx.play('click');
-  if (/[?&]debug\b/.test(location.search)) window.__caden = { wheel: () => wheel, setWide: (v) => setWide(v), appendSaid: (t) => appendSaid(t), hands, air, settings, mesh, meter, sfx, onHeard, holder: () => holder, lastLocate: () => lastLocate, runActions: (f, t) => runActions(f, t), mouth, wave: () => orb, clocks: () => clocks, ringing: () => ringing, announce: (t, ids) => announce(t, ids), resolveWhere: (t) => resolveWhere(t), runTurn: (t, w, s) => runTurn(t, w, s), rest: () => { activity = 0; } }; // test hook
+  if (/[?&]debug\b/.test(location.search)) window.__caden = { wheel: () => wheel, setWide: (v) => setWide(v), appendSaid: (t) => appendSaid(t), hands, air, settings, mesh, meter, sfx, onHeard, holder: () => holder, lastLocate: () => lastLocate, runActions: (f, t) => runActions(f, t), mouth, wave: () => orb, clocks: () => clocks, ringing: () => ringing, announce: (t, ids) => announce(t, ids), resolveWhere: (t) => resolveWhere(t), runTurn: (t, w, s, i) => runTurn(t, w, s, i), rest: () => { activity = 0; } }; // test hook
   // #display boots straight into touch-free mode (kiosk screens).
   if (/(^|[#&])display\b/.test(location.hash)) { settings.display = true; saveSettings(); }
   applyDisplay();
