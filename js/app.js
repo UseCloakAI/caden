@@ -24,6 +24,7 @@ import { sfx } from './sfx.js';
 import { where } from './where.js';
 import { still } from './camera.js';
 import { watchMotion } from './motion.js';
+import { startGlobe } from './globe.js';
 import { parseDuration, parseAlarm, sayLeft, showLeft } from './clocks.js';
 
 const $ = (id) => document.getElementById(id);
@@ -1910,6 +1911,7 @@ addEventListener('resize', () => renderDock());
 
 // ── boot ─────────────────────────────────────────────────────────────────────
 function boot() {
+  startGlobe($('globe'));
   orb = new Wave($('wave'));            // Caden is the wave
   orb.speech = () => mouth.speech();      // speaking swells it with the real voice
   orb.onLevel = (level) => { document.documentElement.dataset.quality = level; if (sheetTab === 'home' && $('sheetHost').firstElementChild) refreshQuality(); };
