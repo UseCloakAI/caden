@@ -906,3 +906,9 @@ html:not(.night) .clock b { color: #06305a; text-shadow: 0 1px 0 rgba(255,255,25
 
 
 html.locked .aero { opacity: .15; }
+
+/* words land with a fade and a small lift: no blur filter (a dozen blurred
+   words at 48 to 72 px was what made replies stutter on tablets) */
+.caption .said .w { animation-name: wordInLite; will-change: auto; }
+@keyframes wordInLite { from { opacity: 0; translate: 0 5px; } }
+html:not(.night) .caption .said { text-shadow: none; }

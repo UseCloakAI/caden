@@ -934,15 +934,28 @@ function setWide(on) {
 // Caden's words take the largest size that fits between the top bar and the
 // wave (measured, not guessed from length), down to a floor; past the floor
 // they scroll in place. The "Say Hey Caden" hint steps aside while words show.
+// One run per frame at most (a sentence landing and the observer both ask).
+// Within a reply the size only ever steps down, so the common case is a
+// single measurement: "still fits at the current size" and done.
+let fitQueued = false, fitSize = 0, fitText = 0;
 function fitWords() {
+  if (fitQueued) return;
+  fitQueued = true;
+  requestAnimationFrame(() => { fitQueued = false; fitWordsNow(); });
+}
+function fitWordsNow() {
   const here = $('here'), cap = here?.querySelector('.caption'), said = $('capSaid');
   if (!cap || !said) return;
-  const has = !!said.textContent.trim();
+  const len = said.textContent.length;
+  const has = len > 0 && !!said.textContent.trim();
   document.documentElement.classList.toggle('talking-words', has);
-  said.style.fontSize = '';
-  if (!has) return;
+  if (!has) { said.style.fontSize = ''; fitSize = 0; fitText = 0; return; }
   const room = here.clientHeight - 8;
-  const max = parseFloat(getComputedStyle(said).fontSize);
+  if (fitSize && len >= fitText) {            // same reply, more words
+    fitText = len;
+    if (cap.scrollHeight <= room) return;      // still fits: one measurement
+  } else { said.style.fontSize = ''; fitSize = 0; fitText = len; }
+  const max = fitSize || parseFloat(getComputedStyle(said).fontSize);
   const min = innerWidth <= 720 ? 19 : 22;
   let lo = min, hi = max, best = min;
   for (let i = 0; i < 7; i++) { // binary search on the font size
@@ -951,6 +964,7 @@ function fitWords() {
     if (cap.scrollHeight <= room) { best = mid; lo = mid; } else hi = mid;
   }
   said.style.fontSize = best.toFixed(1) + 'px';
+  fitSize = best;
 }
 addEventListener('resize', () => fitWords());
 queueMicrotask(() => { const el = document.getElementById('capSaid'); if (el) new MutationObserver(() => fitWords()).observe(el, { childList: true, characterData: true, subtree: true }); });
