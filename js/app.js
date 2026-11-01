@@ -307,7 +307,7 @@ function listenNow() {
   mode = 'command';
   modeUntil = now() + 7000;
   clockSoon = false;
-  document.documentElement.classList.remove('resting');
+  if (document.documentElement.classList.contains('resting')) { document.documentElement.classList.remove('resting'); placeClock(); }
   activity = now();
   if (iHold()) { setPhase('listening'); $('capYou').innerHTML = ''; }
 }
@@ -556,7 +556,7 @@ function isResting() {
 }
 function stir() {
   activity = now(); clockSoon = false;
-  document.documentElement.classList.remove('resting');
+  if (document.documentElement.classList.contains('resting')) { document.documentElement.classList.remove('resting'); placeClock(); }
 }
 
 function say(s) {
@@ -645,6 +645,7 @@ function onSight({ faces: found }) {
 
 // ── views ────────────────────────────────────────────────────────────────────
 function renderView(animate = false) {
+  requestAnimationFrame(() => placeClock());
   const setup = !home;
   $('setup').hidden = !setup;
   for (const id of ['top', 'stage', 'dock']) $(id).hidden = setup;
@@ -733,6 +734,47 @@ function placePuck() {
   puckAt = to;
 }
 
+// The clock lives in the top-right corner, and in the middle, large, while
+// resting. Both are the same element moved by transform only (see css), with
+// the date tagging along underneath.
+const BIG = 200, DATE = 22;
+let clockKey = '';
+function placeClock(force = false) {
+  const b = $('clockTime'), d = $('clockDate');
+  if (!b || !d) return;
+  const W = innerWidth, H = innerHeight, narrow = W <= 720;
+  const resting = document.documentElement.classList.contains('resting');
+  const key = [W, H, resting, b.textContent, d.textContent].join('|');
+  if (!force && key === clockKey) return;
+  const tw = b.offsetWidth, th = b.offsetHeight, dw = d.offsetWidth, dh = d.offsetHeight;
+  if (!tw) return; // stage hidden (setup); placed once it shows
+  const first = !clockKey;
+  clockKey = key;
+  const wave = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--wave-h')) || Math.max(150, Math.min(320, H * 0.3));
+  const ob = $('btnOptions')?.getBoundingClientRect();
+  const safeTop = ob && ob.height ? ob.top : 20; // the options button already sits under the status bar
+  let ts, ds, tx, ty, dx, dy;
+  if (resting) {
+    ts = Math.max(64, Math.min(200, W * 0.19)) / BIG;
+    ds = Math.max(16, Math.min(22, W * 0.02)) / DATE;
+    const blockH = th * ts * 0.98 + 12 + dh * ds;
+    const top = Math.max(safeTop + 70, (H - wave) / 2 - blockH / 2);
+    tx = (W - tw * ts) / 2; ty = top;
+    dx = (W - dw * ds) / 2; dy = top + th * ts * 0.98 + 12;
+  } else {
+    const right = narrow ? 22 : 34;
+    ts = (narrow ? 26 : 34) / BIG; ds = 14 / DATE;
+    tx = W - right - tw * ts; ty = safeTop + 4;
+    dx = W - right - dw * ds; dy = ty + th * ts * 0.9 + 4;
+  }
+  const clock = $('clock');
+  if (first) clock.classList.add('no-anim');
+  b.style.transform = `translate(${tx}px, ${ty}px) scale(${ts})`;
+  d.style.transform = `translate(${dx}px, ${dy}px) scale(${ds})`;
+  if (first) { void clock.offsetWidth; clock.classList.remove('no-anim'); clock.classList.add('placed'); }
+}
+addEventListener('resize', () => placeClock(true));
+
 function tickClock() {
   const d = new Date();
   // Ribbon's sky: day 7am-7pm, night otherwise (or when the device is in dark mode)
@@ -740,6 +782,7 @@ function tickClock() {
   document.documentElement.classList.toggle('night', night);
   $('clockTime').textContent = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   $('clockDate').textContent = d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
+  placeClock();
 }
 
 // ── status dots ──────────────────────────────────────────────────────────────
@@ -1423,7 +1466,9 @@ function stopEnroll() {
 // ── ticks ────────────────────────────────────────────────────────────────────
 setInterval(() => {
   tickClock();
+  const was = document.documentElement.classList.contains('resting');
   document.documentElement.classList.toggle('resting', isResting());
+  if (was !== document.documentElement.classList.contains('resting')) placeClock();
   if (mode === 'command' && now() > modeUntil) {
     mode = 'wait';
     if (iHold() && phase === 'listening') { setPhase('idle'); sfx.play('cancel'); }

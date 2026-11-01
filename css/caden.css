@@ -610,21 +610,29 @@ html.night .wheel-ring { background: rgba(8, 26, 54, .8); }
 .dimmer { position: fixed; inset: 0; z-index: 90; background: #01040a; opacity: 0; pointer-events: none; transition: opacity var(--t-slow) var(--e-sine); }
 
 /* resting: after a quiet minute the clock takes the middle, everything else steps back */
-.clock { transition: top var(--t-slow) var(--e-out), right var(--t-slow) var(--e-out), translate var(--t-slow) var(--e-out), opacity var(--t-std); }
-.clock b { display: block; transition: font-size var(--t-slow) var(--e-out), letter-spacing var(--t-slow) var(--e-out); }
-.clock span { transition: font-size var(--t-slow) var(--e-out); }
 .here .caption, .hint, .options-btn, .dock { transition: opacity var(--t-std) var(--e-out); }
-html.resting .clock { top: calc((100dvh - var(--wave-h)) / 2); right: 50%; translate: 50% -50%; text-align: center; }
-html.resting .clock b { font-size: clamp(88px, 17vw, 220px); font-weight: 400; letter-spacing: -0.055em; line-height: .95; }
-html.resting .clock span { font-size: clamp(16px, 2vw, 22px); margin-top: 10px; }
 html.resting .here .caption, html.resting .hint { opacity: 0; pointer-events: none; }
 html.resting .options-btn { opacity: .55; }
 html.resting .dock { opacity: .7; }
-@media (prefers-reduced-motion: reduce) { .clock, .clock b, .clock span, .dimmer { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .dimmer { transition: none; } }
 @media (max-width: 720px) {
   .room { padding: 8px 12px 8px 8px; font-size: 14px; }
   .room.me::after { display: none; }
 }
-html.resting .clock b { white-space: nowrap; font-size: clamp(64px, 15vw, 200px); }
 html.resting .hint { visibility: hidden; }
 .room.holder.me::after { color: color-mix(in oklab, var(--on-acc) 78%, transparent); }
+
+/* the clock: drawn once at its big size, moved only by transform (js placeClock),
+   so corner <-> middle is one smooth GPU tween. Scaling big text down keeps it crisp. */
+.clock { position: fixed; inset: 0 auto auto 0; top: 0; right: auto; left: 0; width: 0; height: 0; text-align: left; z-index: 5; pointer-events: none; }
+.clock b, .clock span {
+  position: absolute; left: 0; top: 0; transform-origin: 0 0; white-space: nowrap; margin: 0;
+  transition: transform var(--t-slow) var(--e-out), opacity var(--t-std);
+  will-change: transform;
+}
+.clock b { font-size: 200px; font-weight: 440; letter-spacing: -0.045em; line-height: 1; font-variant-numeric: tabular-nums; }
+.clock span { font-size: 22px; font-weight: 500; color: var(--ink2); }
+.clock.no-anim b, .clock.no-anim span { transition: none; }
+@media (max-width: 720px) { .clock b { font-size: 200px; } }
+@media (prefers-reduced-motion: reduce) { .clock b, .clock span { transition: opacity var(--t-std); } }
+.clock:not(.placed) b, .clock:not(.placed) span { opacity: 0; }
