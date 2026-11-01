@@ -42,7 +42,7 @@ let home = store.get('home');              // { code, id }
 let people = store.get('people', []);      // [{id,name,color,d:[...],updated,deleted?}]
 let turns = [];
 let memories = [];
-const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false, voiceEngine: 'nvidia', nvVoice: NV_VOICE, locate: true, voiceCal: null, sfx: true, sfxVol: 0.6, volume: 100, dim: 0, wakeHere: true, quality: 'auto', alertVol: 0.85 }, store.get('settings', {}));
+const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false, voiceEngine: 'nvidia', nvVoice: NV_VOICE, locate: true, voiceCal: null, sfx: true, sfxVol: 0.6, volume: 100, dim: 0, wakeHere: true, quality: 'auto', alertVol: 0.85, theme: 'auto' }, store.get('settings', {}));
 const saveSettings = () => store.set('settings', settings);
 
 const devices = new Map();                 // id -> {id,name,room,kind,last,holder,epoch,sees,phase}
@@ -1044,7 +1044,9 @@ addEventListener('resize', () => placeClock(true));
 function tickClock() {
   const d = new Date();
   // Ribbon's sky: day 7am-7pm, night otherwise (or when the device is in dark mode)
-  const night = d.getHours() < 7 || d.getHours() >= 19 || matchMedia('(prefers-color-scheme: dark)').matches;
+  // theme: auto follows Ribbon's sky (night 7pm to 7am, or the device's dark mode)
+  const auto = d.getHours() < 7 || d.getHours() >= 19 || matchMedia('(prefers-color-scheme: dark)').matches;
+  const night = settings.theme === 'dark' ? true : settings.theme === 'light' ? false : auto;
   document.documentElement.classList.toggle('night', night);
   $('clockTime').textContent = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   $('clockDate').textContent = d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
@@ -1525,7 +1527,9 @@ const QUALITY_NOTE = {
 function qualityCard() {
   const i = QUALITIES.indexOf(settings.quality);
   const level = document.documentElement.dataset.quality || 'high';
+  const themes = [['auto', 'Auto', 'circle-half'], ['light', 'Light', 'sun'], ['dark', 'Dark', 'moon']];
   return `<div class="card"><h3>Display</h3>
+    <div class="field"><label>Theme</label><div class="chips" role="radiogroup" aria-label="Theme">${themes.map(([v, l, ic]) => `<button class="chip" type="button" role="radio" data-act="theme" data-v="${v}" aria-pressed="${settings.theme === v}" aria-checked="${settings.theme === v}"><i class="ph ph-${ic}" aria-hidden="true"></i>${l}</button>`).join('')}</div><small class="fine">Auto is light by day and dark from 7 pm, or dark whenever this device is in dark mode.</small></div>
     <div class="quality">
       <label for="sQuality" class="sr">Quality</label>
       <input type="range" id="sQuality" min="0" max="3" step="1" value="${i < 0 ? 0 : i}" aria-valuetext="${settings.quality}">
@@ -1695,6 +1699,7 @@ function bindPanel(host) {
 
 async function act(a, el) {
   if (a === 'copy') { try { await navigator.clipboard.writeText(el.dataset.v); toast('Invite link copied'); } catch { toast(el.dataset.v); } }
+  if (a === 'theme') { settings.theme = el.dataset.v; saveSettings(); sfx.play('toggleOn'); tickClock(); renderSheet(); return; }
   if (a === 'alertTest') { sfx.unlock(); sfx.play('ring', { force: true, alert: true }); return; }
   if (a === 'wakePerm') { try { NativeApp()?.openWakeSettings?.(el.dataset.v); } catch { /* */ } return; }
   if (a === 'leave' && confirm('Leave this home on this device?')) leaveHome();
