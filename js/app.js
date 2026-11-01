@@ -459,6 +459,10 @@ async function runTurn(text, who, step = false) {
 
   const ctrl = new AbortController();
   turnCtrl = ctrl;
+  // "announce ...": hold Caden's own words until the reply is in. If the
+  // announcement plays on this screen, they're dropped and only it is heard.
+  const holdSpeech = /\bannounce|announcement|tell (everyone|everybody|the (whole )?house)\b/i.test(text);
+  const held = [];
   streaming = true;
   const place = await Promise.race([where(), new Promise((r) => setTimeout(() => r(null), 1500))]).catch(() => null);
   const context = homeContext({
@@ -473,6 +477,7 @@ async function runTurn(text, who, step = false) {
       home: home.id, turn, turns, system: context, where: place, signal: ctrl.signal,
       onSentence: (s) => {
         if (ctrl.signal.aborted || HIDDEN_LINE.test(s)) return;
+        if (holdSpeech) { held.push(s); return; }
         appendSaid(s);
         say(s);
       },
@@ -480,8 +485,12 @@ async function runTurn(text, who, step = false) {
     turn.reply = stripRemember(full) || '…';
     const recent = [text, ...turns.slice(-3).filter((t) => t.whoId || t.who !== 'System').map((t) => t.text)].join(' ');
     var stepResult = runActions(full, recent);
+    if (holdSpeech) {
+      if (stepResult.announcedHere) setPhase('idle');
+      else for (const h of held) { appendSaid(h); say(h); }
+    }
     // A reply that was only actions: say what actually happened, briefly.
-    if (!stripRemember(full) && stepResult.notes.length && !stepResult.more) {
+    if (!stripRemember(full) && stepResult.notes.length && !stepResult.more && !stepResult.announcedHere) {
       const line = stepResult.notes.join(' ');
       turn.reply = line; appendSaid(line); say(line);
     }
@@ -544,7 +553,7 @@ const roomsOf = (ids) => ids.map((id) => devLabel(liveDevices().find((d) => d.id
 // Run the DO: lines of a reply. Returns what happened, for the next agent step.
 function runActions(full, said = '') {
   const notes = [];
-  let more = false;
+  let more = false, announcedHere = false;
   const lines = String(full || '').split('\n');
   // "tell <room>" already takes Caden there; drop a "go" to the same room
   const told = new Set(lines.map((l) => l.match(/^\s*DO:\s*tell\s+([^|]+)\|/i)?.[1]).filter(Boolean).map((r) => findRoom(r.trim())?.id).filter(Boolean));
@@ -571,7 +580,10 @@ function runActions(full, said = '') {
       const w = resolveWhere(arg);
       if (!msg) notes.push('Announce needs a message.');
       else if (!w.ids.length) notes.push(`Couldn't find ${w.missing.join(', ')} to announce on.`);
-      else { later(() => announce(msg, w.ids)); notes.push(`Announced on ${roomsOf(w.ids)}.`); }
+      else {
+        if (w.ids.includes(me.id)) announcedHere = true;
+        later(() => announce(msg, w.ids)); notes.push(`Announced on ${roomsOf(w.ids)}.`);
+      }
       if (w.missing.length && w.ids.length) notes.push(`No screen called ${w.missing.join(', ')}.`);
     } else if (verb === 'tell') {
       const d = findRoom(arg), msg = (parts[1] || '').replace(/\s*\(.*\)\s*$/, '');
@@ -595,7 +607,7 @@ function runActions(full, said = '') {
     }
   }
   if (!mouth.speaking) flushLater();
-  return { notes, more };
+  return { notes, more, announcedHere };
 }
 
 // Agent steps: if the model asked to continue (DO: continue), or one of its
@@ -669,7 +681,7 @@ function hearAnnouncement(text, from) {
   sfx.unlock();
   sfx.play('announce', { force: true });
   notice({ icon: 'megaphone-simple', title: `Announcement${from && from !== (me.room || me.name) ? ` from the ${from}` : ''}`, body: text, ms: 20000 });
-  setTimeout(() => { ears.pause(); mouth.say(text); }, 1300);
+  setTimeout(() => { ears.pause(); mouth.say(text); }, 1500); // after the third tone
 }
 function tellRoom(d, text) {
   if (d.id === me.id && iHold()) { sfx.play('announce', { force: true }); setTimeout(() => { showSaid(text); say(text); }, 900); return; }

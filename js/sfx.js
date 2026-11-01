@@ -194,10 +194,14 @@ const DEFS = {
     noise(oc, b, { dur: 0.55, type: 'lowpass', from: 300, to: 1000, q: 0.8, gain: 0.04, attack: 0.25, send: 0.4 });
     [G3, D4, G4].forEach((f, i) => tone(oc, b, { t: 0.42 + i * 0.08, f, dur: 0.6, gain: 0.05, attack: 0.02, sub: 0, pan: -0.25 + i * 0.25, send: 0.4 }));
   }],
-  // announcement: a warm two-note "ding, dong" before the message
-  announce: [2.4, 0.3, (oc, b) => {
-    tone(oc, b, { f: G4, dur: 0.9, gain: 0.1, attack: 0.012, warm: 0.5, sub: 0.25, send: 0.5, pan: -0.1 });
-    tone(oc, b, { t: 0.42, f: D4, dur: 1.4, gain: 0.11, attack: 0.012, warm: 0.5, sub: 0.35, send: 0.55, pan: 0.1 });
+  // announcement: a cabin-PA chime, three soft bell tones rising (G4, B4, D5),
+  // each left to ring. Bell = the tone plus a faint inharmonic partial.
+  announce: [3.2, 0.32, (oc, b) => {
+    [G4, B4, D5].forEach((f, i) => {
+      const t = i * 0.36;
+      tone(oc, b, { t, f, dur: 2.0 - i * 0.2, gain: 0.1, attack: 0.006, warm: 0.22, sub: 0, cut: 3200, pan: (i - 1) * 0.15, send: 0.5 });
+      sine(oc, b, { t, f: f * 2.76, dur: 0.5, gain: 0.012, attack: 0.004, send: 0.3 });
+    });
   }],
   // timer ringtone (looped every few seconds): a soothing rolled G major chord
   // that rises, then settles on the low G
@@ -212,7 +216,7 @@ const DEFS = {
     [D4, G4, B4, D5].forEach((f, i) => tone(oc, b, { t: 0.5 + i * 0.22, f, dur: 1.8, gain: 0.05, attack: 0.03, warm: 0.4, sub: 0, pan: (i - 1.5) * 0.25, send: 0.6 }));
   }],
 };
-const PEAK = { tick: -15, value: -13, press: -14, bump: -12, pop: -15, step: -15, chime: -9, launch: -9, connected: -9, select: -9, arrive: -9, announce: -8, ring: -8, alarm: -8 };
+const PEAK = { tick: -15, value: -13, press: -14, bump: -12, pop: -15, step: -15, chime: -9, launch: -9, connected: -9, select: -9, arrive: -9, announce: -7, ring: -8, alarm: -8 };
 
 // Caden's moments → palette sounds.
 const ALIAS = {
