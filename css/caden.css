@@ -839,3 +839,125 @@ body .toast { background: rgba(12, 39, 64, .9) !important; color: #f4f8fc !impor
 html.night body .toast { background: rgba(232, 241, 252, .94) !important; color: #0c2740 !important; }
 /* words start at the page's left margin, like the menu and the clock, not a centred column */
 .caption, .here.wide .caption { margin: 0; max-width: min(1100px, 100%); }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Frutiger Aero. Day: saturated sky to a white horizon, sun glare, soft
+   clouds, glossy green hills under the wave, drifting bubbles. Night: deep
+   blue, a teal and green aurora, stars, the hills in moonlight. Controls:
+   glossy aqua with the white shine on their top half; overlays are glass
+   with a sheen. Deliberate gloss on primary controls and overlays only.
+   ═══════════════════════════════════════════════════════════════════════ */
+.sky-day { background: linear-gradient(180deg, #0565c9 0%, #1d8fe6 30%, #5cc2f5 58%, #b9ebff 80%, #f2fcff 100%); }
+.sky-night { background: linear-gradient(180deg, #020a1c 0%, #062250 46%, #0b3f7c 78%, #12609e 100%); }
+.aero { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+.aero > * { position: absolute; transition: opacity 1.4s var(--e-out); }
+
+/* sun glare, top right */
+.aero-sun { right: -12vmax; top: -16vmax; width: 52vmax; height: 52vmax; border-radius: 50%;
+  background: radial-gradient(circle, rgba(255,255,255,.95) 0%, rgba(255,255,255,.55) 14%, rgba(210,242,255,.25) 34%, transparent 62%); }
+/* soft clouds: layered white ellipses */
+.aero-clouds { inset: 4% 0 auto 0; height: 44%;
+  background:
+    radial-gradient(ellipse 18% 9% at 16% 34%, rgba(255,255,255,.9), transparent 70%),
+    radial-gradient(ellipse 12% 7% at 24% 28%, rgba(255,255,255,.85), transparent 70%),
+    radial-gradient(ellipse 22% 10% at 58% 54%, rgba(255,255,255,.7), transparent 70%),
+    radial-gradient(ellipse 14% 7% at 66% 48%, rgba(255,255,255,.75), transparent 70%),
+    radial-gradient(ellipse 16% 8% at 90% 70%, rgba(255,255,255,.55), transparent 70%);
+  filter: blur(6px); animation: aeroDrift 90s linear infinite alternate; }
+@keyframes aeroDrift { to { translate: 4vw 0; } }
+
+/* glossy green hills along the bottom, behind the wave */
+.aero-hills { left: 0; right: 0; bottom: 0; height: calc(var(--wave-h) * 1.05); }
+.aero-hills i { position: absolute; border-radius: 50%; }
+.aero-hills i:nth-child(1) { left: -20%; right: 35%; bottom: -55%; height: 120%;
+  background: radial-gradient(ellipse at 50% 18%, #b8f27a 0%, #6cc93a 30%, #2f9a2a 62%, #1c6e1d 100%);
+  box-shadow: inset 0 14px 22px -10px rgba(255,255,255,.75); }
+.aero-hills i:nth-child(2) { left: 30%; right: -25%; bottom: -62%; height: 125%;
+  background: radial-gradient(ellipse at 45% 16%, #c7f58b 0%, #78d044 28%, #36a52e 60%, #1e7420 100%);
+  box-shadow: inset 0 14px 24px -10px rgba(255,255,255,.8); }
+/* the glossy sheen across the hilltops */
+.aero-hills i:nth-child(3) { left: 0; right: 0; bottom: 0; height: 100%; border-radius: 0;
+  background: linear-gradient(180deg, transparent 0%, transparent 38%, rgba(255,255,255,.18) 52%, transparent 70%); }
+
+/* bubbles: glassy spheres with a highlight, drifting up slowly */
+.aero-bubbles { inset: 0; }
+.aero-bubbles i { position: absolute; bottom: -12vmin; border-radius: 50%; width: var(--s); height: var(--s); left: var(--x);
+  background: radial-gradient(circle at 32% 28%, rgba(255,255,255,.95) 0 8%, rgba(255,255,255,.25) 18%, rgba(160,225,255,.08) 52%, rgba(255,255,255,.35) 70%, rgba(255,255,255,.05) 72%);
+  border: 1px solid rgba(255,255,255,.45); animation: aeroRise var(--d) linear infinite; animation-delay: var(--w); opacity: .8; }
+.aero-bubbles i:nth-child(1) { --s: 7vmin; --x: 8%; --d: 38s; --w: -4s; }
+.aero-bubbles i:nth-child(2) { --s: 3.5vmin; --x: 18%; --d: 30s; --w: -18s; }
+.aero-bubbles i:nth-child(3) { --s: 5vmin; --x: 33%; --d: 44s; --w: -28s; }
+.aero-bubbles i:nth-child(4) { --s: 2.6vmin; --x: 47%; --d: 26s; --w: -9s; }
+.aero-bubbles i:nth-child(5) { --s: 6vmin; --x: 61%; --d: 40s; --w: -22s; }
+.aero-bubbles i:nth-child(6) { --s: 3vmin; --x: 74%; --d: 32s; --w: -2s; }
+.aero-bubbles i:nth-child(7) { --s: 8vmin; --x: 86%; --d: 50s; --w: -35s; }
+.aero-bubbles i:nth-child(8) { --s: 2.2vmin; --x: 93%; --d: 24s; --w: -12s; }
+@keyframes aeroRise { 0% { translate: 0 0; } 50% { translate: 2vw -60vh; } 100% { translate: -1vw -120vh; } }
+
+/* night: aurora, stars, moonlit hills; no sun, no clouds */
+.aero-aurora, .aero-stars { inset: 0; opacity: 0; }
+.aero-aurora { background:
+    radial-gradient(ellipse 60% 22% at 30% 30%, rgba(60, 230, 190, .35), transparent 70%),
+    radial-gradient(ellipse 50% 16% at 62% 22%, rgba(80, 200, 255, .3), transparent 70%),
+    radial-gradient(ellipse 40% 14% at 80% 38%, rgba(120, 255, 170, .22), transparent 70%);
+  filter: blur(10px); animation: aeroDrift 60s ease-in-out infinite alternate; }
+.aero-stars { background-image:
+    radial-gradient(1.5px 1.5px at 12% 18%, #fff, transparent), radial-gradient(1px 1px at 28% 9%, #fff, transparent),
+    radial-gradient(1.5px 1.5px at 44% 26%, #e8f4ff, transparent), radial-gradient(1px 1px at 57% 12%, #fff, transparent),
+    radial-gradient(1.5px 1.5px at 71% 31%, #fff, transparent), radial-gradient(1px 1px at 83% 15%, #dff, transparent),
+    radial-gradient(1px 1px at 92% 40%, #fff, transparent), radial-gradient(1.5px 1.5px at 6% 44%, #fff, transparent),
+    radial-gradient(1px 1px at 36% 47%, #fff, transparent), radial-gradient(1px 1px at 64% 51%, #eef, transparent); }
+html.night .aero-sun, html.night .aero-clouds { opacity: 0; }
+html.night .aero-aurora, html.night .aero-stars { opacity: 1; }
+html.night .aero-hills i:nth-child(1) { background: radial-gradient(ellipse at 50% 18%, #2f7a4a 0%, #1b5236 40%, #0d3324 100%); box-shadow: inset 0 12px 20px -10px rgba(170, 230, 255, .35); }
+html.night .aero-hills i:nth-child(2) { background: radial-gradient(ellipse at 45% 16%, #378a52 0%, #1e5c3a 40%, #0f3826 100%); box-shadow: inset 0 12px 20px -10px rgba(170, 230, 255, .4); }
+html.night .aero-bubbles i { opacity: .35; }
+
+/* glossy aqua controls: a white shine on the top half */
+.btn.primary, .chip[aria-pressed="true"], .clock-pill.ringing, .wheel-hl {
+  background: linear-gradient(180deg, rgba(255,255,255,.55) 0%, rgba(255,255,255,.18) 48%, rgba(255,255,255,0) 50%), linear-gradient(180deg, #4fc3ff 0%, #1186e0 55%, #0a6fc4 100%) !important;
+  color: #fff !important; border: 1px solid rgba(0, 70, 140, .55) !important; text-shadow: 0 1px 1px rgba(0, 50, 110, .45);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.7), 0 1px 3px rgba(0, 60, 130, .25) !important;
+}
+.btn:not(.primary):not(.ghost), .chip:not([aria-pressed="true"]) {
+  background: linear-gradient(180deg, rgba(255,255,255,.8) 0%, rgba(255,255,255,.45) 50%, rgba(225,240,250,.35) 51%, rgba(240,250,255,.55) 100%) !important;
+  border: 1px solid rgba(255,255,255,.85) !important; color: #0c3b66 !important; box-shadow: inset 0 1px 0 #fff, 0 1px 2px rgba(0, 60, 130, .18) !important;
+}
+html.night .btn:not(.primary):not(.ghost), html.night .chip:not([aria-pressed="true"]) {
+  background: linear-gradient(180deg, rgba(160,210,255,.28) 0%, rgba(120,180,240,.12) 50%, rgba(60,120,200,.1) 51%, rgba(90,150,220,.2) 100%) !important;
+  border: 1px solid rgba(170, 215, 255, .35) !important; color: #e6f3ff !important;
+}
+
+/* the options button: a glossy blue orb */
+.options-btn, .options-btn:hover, .options-btn.is-open {
+  width: 54px; height: 54px; border-radius: 50%; color: #fff;
+  background: radial-gradient(ellipse 70% 45% at 50% 22%, rgba(255,255,255,.85), rgba(255,255,255,0) 72%), radial-gradient(circle at 50% 70%, #5fd0ff 0%, #1689e2 55%, #0a5fb0 100%) !important;
+  border: 1px solid rgba(0, 60, 130, .55) !important; box-shadow: 0 2px 6px rgba(0, 50, 120, .35), inset 0 -3px 8px rgba(120, 220, 255, .55) !important;
+}
+.options-btn:active { scale: .95; }
+
+/* overlays: Vista-style glass with a sheen across the top */
+.sheet, .wheel-ring {
+  background: linear-gradient(180deg, rgba(255,255,255,.55) 0%, rgba(255,255,255,.2) 22%, rgba(255,255,255,.08) 23%, rgba(225,242,255,.5) 100%) !important;
+  border: 1px solid rgba(255,255,255,.9) !important; box-shadow: 0 10px 40px -12px rgba(0, 50, 120, .45), inset 0 1px 0 #fff !important;
+  -webkit-backdrop-filter: blur(20px) saturate(160%); backdrop-filter: blur(20px) saturate(160%);
+}
+html.night .sheet, html.night .wheel-ring {
+  background: linear-gradient(180deg, rgba(150,200,255,.24) 0%, rgba(90,150,220,.12) 22%, rgba(20,50,100,.55) 23%, rgba(10,35,75,.8) 100%) !important;
+  border: 1px solid rgba(170, 215, 255, .4) !important;
+}
+html[data-quality="low"] .sheet, html[data-quality="low"] .wheel-ring { background: #e6f4fe !important; }
+html.night[data-quality="low"] .sheet, html.night[data-quality="low"] .wheel-ring { background: #0d2a52 !important; }
+
+/* rooms: the current room gets a small glossy aqua capsule under its name */
+.puck { height: 4px; bottom: 0; border-radius: 3px; background: linear-gradient(180deg, #8fe0ff, #1186e0); box-shadow: 0 0 6px rgba(80, 190, 255, .8); }
+
+/* words: crisp over the bright sky */
+html:not(.night) .caption .said { color: #06305a; text-shadow: 0 1px 0 rgba(255,255,255,.55); }
+html:not(.night) .clock b { color: #06305a; text-shadow: 0 1px 0 rgba(255,255,255,.6); }
+
+/* low quality and reduced motion: still Aero, nothing moves or blurs */
+html[data-quality="low"] .aero-bubbles, html[data-quality="low"] .aero-clouds, html[data-quality="low"] .aero-aurora { animation: none; filter: none; }
+html[data-quality="low"] .aero-bubbles { display: none; }
+@media (prefers-reduced-motion: reduce) { .aero-bubbles i, .aero-clouds, .aero-aurora { animation: none; } }
+html.locked .aero { opacity: .15; }
