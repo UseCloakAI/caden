@@ -96,7 +96,7 @@ jobs:
           name: caden-apk
           path: site
       - name: Stage the web app
-        run: cp -r index.html manifest.webmanifest sw.js css js icons site/
+        run: cp -r index.html manifest.webmanifest sw.js css js icons fonts site/
       - uses: actions/configure-pages@v5
         with:
           enablement: true

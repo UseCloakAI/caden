@@ -131,6 +131,7 @@ public class MainActivity extends Activity {
         MIME.put("webmanifest", "application/manifest+json");
         MIME.put("svg", "image/svg+xml");
         MIME.put("png", "image/png");
+        MIME.put("woff2", "font/woff2");
     }
 
     private WebResourceResponse asset(String path) {

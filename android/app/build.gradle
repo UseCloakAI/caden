@@ -8,7 +8,7 @@ def web = rootProject.file('..')
 def www = layout.buildDirectory.dir('generated/www')
 def syncWeb = tasks.register('syncWeb', Sync) {
     from(web) {
-        include 'index.html', 'manifest.webmanifest', 'css/**', 'js/**', 'icons/**'
+        include 'index.html', 'manifest.webmanifest', 'css/**', 'js/**', 'icons/**', 'fonts/**'
     }
     into www.map { it.dir('www') }
 }

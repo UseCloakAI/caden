@@ -37,7 +37,9 @@ When someone says something worth keeping, the model adds a `REMEMBER:` line (ne
 
 ```
 index.html            app shell
-css/caden.css         design (warm light / cozy dark, rounded, springy)
+css/caden.css         design (warm light / cozy dark, rounded, springy; one coral accent, AA contrast)
+fonts/                Fredoka + Nunito, self-hosted (OFL)
+icons/ph/             Phosphor icon font, vendored (MIT)
 js/app.js             the agent: holder election, handoffs, turns, voice loop, settings
 js/mesh.js            encrypted Realtime broadcast + BroadcastChannel
 js/faces.js           face detection / recognition / enrollment

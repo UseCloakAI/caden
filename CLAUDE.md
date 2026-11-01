@@ -4,6 +4,7 @@ Multi-device home voice agent. Static web app (no build) + Android WebView wrapp
 
 - Web app files ship as-is: `index.html`, `css/`, `js/`, `icons/`, `manifest.webmanifest`, `sw.js`. The Android app bundles the same files (`android/app/build.gradle` `syncWeb`) — new top-level web files must be added there, to `SHELL` in `sw.js`, and to the Pages stage step in `.github/workflows/ship.yml`.
 - Bump `CACHE` in `sw.js` when shipping changes to shell files.
+- Design: one accent (coral; `--acc-ink` for coral text, `--on-acc` for text on coral fills), text colors checked against WCAG AA. Shapes: controls are pills, inputs 16px, cards/sheets 24px. Icons are Phosphor (`icons/ph`, vendored); no emoji, no hand-drawn SVG icons. Fonts are self-hosted (`fonts/`). No em-dashes or middot chains in UI copy.
 - Brain = Caden Supabase project (`wiimiqqmdmfikuqgqhtm`) edge function `brain`; model = Cloak `/v1/chat` `model:"home"` (NVIDIA key pool). Background/utility work must not use chat tiers.
 - Mesh payloads are always encrypted (`js/mesh.js`); never send plaintext over Realtime, and never send camera frames anywhere.
 - The holder protocol (claim / handoff / epoch) is in `js/app.js` — keep "highest epoch wins, ties to lower id".

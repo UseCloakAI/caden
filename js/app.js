@@ -18,11 +18,12 @@ import { Orb } from './orb.js';
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const now = () => Date.now();
-const COLORS = ['#FF7A59', '#4FD1A1', '#67B7FF', '#B29BFF', '#FFB13D', '#FF8FB1', '#3CC8C8', '#9B7BFF'];
+const COLORS = ['#FF7A59', '#4FD1A1', '#67B7FF', '#FFC857', '#FF8FB1', '#3CC8C8', '#F2A65A', '#9AD36A'];
 const ROOMS = ['Living room', 'Kitchen', 'Bedroom', 'Office', 'Kids room', 'Hallway', 'Garage'];
-const ROOM_ICON = [[/kitchen|dining/i, '🍳'], [/living|lounge|family/i, '🛋️'], [/bed/i, '🛏️'], [/office|study|desk/i, '💻'],
-  [/kid|nursery|play/i, '🧸'], [/bath/i, '🛁'], [/hall|entry|door/i, '🚪'], [/garage|car/i, '🚗'], [/garden|yard|patio/i, '🌿']];
-const roomIcon = (r) => (ROOM_ICON.find(([re]) => re.test(r || '')) || [0, '🏠'])[1];
+// Phosphor glyphs (icons/ph, vendored).
+const ROOM_ICON = [[/kitchen|dining/i, 'cooking-pot'], [/living|lounge|family/i, 'couch'], [/bed/i, 'bed'], [/office|study|desk/i, 'desktop'],
+  [/kid|nursery|play/i, 'baby'], [/bath/i, 'bathtub'], [/hall|entry|door/i, 'door'], [/garage|car/i, 'car'], [/garden|yard|patio/i, 'plant']];
+const roomIcon = (r) => `<i class="ph ph-${(ROOM_ICON.find(([re]) => re.test(r || '')) || [0, 'house'])[1]}" aria-hidden="true"></i>`;
 const isNative = !!window.CadenNative;
 
 // ── state ────────────────────────────────────────────────────────────────────
@@ -313,7 +314,7 @@ async function runTurn(text, who) {
   if (who) lastSpeaker = { ...who, at: now() };
   mergeTurn(turn);
   mesh.send('turn', { turn });
-  $('capYou').innerHTML = who ? `<b style="--who:${esc(who.color || '')}">${esc(who.name)}</b> · “${esc(text)}”` : `“${esc(text)}”`;
+  $('capYou').innerHTML = who ? `<b>${esc(who.name)}</b>“${esc(text)}”` : `“${esc(text)}”`;
   $('capSaid').textContent = '';
   setPhase('thinking');
 
@@ -406,7 +407,7 @@ function renderView(animate = false) {
   $('setup').hidden = !setup;
   for (const id of ['top', 'stage', 'dock']) $(id).hidden = setup;
   if (setup) return;
-  $('where').textContent = `${roomIcon(me.room)} ${me.room || me.name}`;
+  $('where').innerHTML = `${roomIcon(me.room)}${esc(me.room || me.name)}`;
   const here = iHold() || moving;
   $('here').hidden = !here;
   $('away').hidden = here;
@@ -459,7 +460,7 @@ mesh.addEventListener('status', (e) => dot('dotNet', e.detail ? 'on' : 'warn', e
 ears.addEventListener('state', (e) => {
   const { state, engine } = e.detail;
   dot('dotMic', state === 'on' ? 'on' : state === 'off' ? '' : 'off', state === 'on' ? `Hearing (${engine})` : state === 'unsupported' ? 'No microphone support here' : state === 'denied' ? 'Microphone blocked' : 'Not hearing');
-  if (state === 'denied') toast('Microphone is blocked — allow it in your browser settings.');
+  if (state === 'denied') toast('Microphone is blocked. Allow it in your browser settings.');
 });
 faces.addEventListener('state', (e) => {
   const { state } = e.detail;
@@ -567,7 +568,7 @@ function showStep(name) {
       const b = document.createElement('button');
       b.className = 'chip';
       b.type = 'button';
-      b.textContent = `${roomIcon(r)} ${r}`;
+      b.innerHTML = `${roomIcon(r)}${r}`;
       b.setAttribute('aria-pressed', String(me.room === r));
       b.onclick = () => { chips.querySelectorAll('.chip').forEach((c) => c.setAttribute('aria-pressed', 'false')); b.setAttribute('aria-pressed', 'true'); $('roomOther').value = ''; draftRoom = r; };
       chips.appendChild(b);
@@ -600,7 +601,7 @@ async function finishSetup(cam) {
   await enterHome(draft);
   if (draftNew) takeOver('first'); // a brand-new home: Caden starts right here
   startSenses();
-  if (!alive().length) setTimeout(() => toast('Tip: add your face in Settings → People so I can follow you.'), 2500);
+  if (!alive().length) setTimeout(() => toast('Tip: add your face in Settings → People.'), 2500);
 }
 $('btnSenses').onclick = () => finishSetup(true);
 $('btnMicOnly').onclick = () => finishSetup(false);
@@ -645,7 +646,7 @@ function renderSheet() {
     <div class="scrim" data-close></div>
     <aside class="sheet" role="dialog" aria-modal="true" aria-label="Settings">
       <header><h2>Settings</h2><button class="icon-btn" data-close aria-label="Close">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></header>
+        <i class="ph ph-x" aria-hidden="true"></i></button></header>
       <div class="tabs" role="tablist">${tabs.map(([k, l]) => `<button class="tab" role="tab" data-tab="${k}" aria-selected="${k === sheetTab}">${l}</button>`).join('')}</div>
       <div class="panel">${panel(sheetTab)}</div>
     </aside>`;
@@ -678,7 +679,7 @@ function panel(tab) {
         <button class="btn small primary" data-act="saveDevice">Save</button>
       </div>
       <div class="card"><h3>Devices (${devs.length})</h3>
-        ${devs.map((d) => `<div class="line"><span class="avatar" style="background:var(--bg2);color:inherit">${roomIcon(d.room)}</span><span class="grow"><b>${esc(d.room || d.name)}</b><small>${esc(d.name)} · ${d.kind === 'app' ? 'Android app' : 'web'}${d.id === me.id ? ' · this one' : ''}${d.sees ? ` · sees ${esc(d.sees.name)}` : ''}</small></span>${d.id === holder.id ? '<span class="chip" aria-pressed="true">Caden</span>' : ''}</div>`).join('')}
+        ${devs.map((d) => `<div class="line"><span class="avatar" style="background:var(--bg2);color:var(--ink)">${roomIcon(d.room)}</span><span class="grow"><b>${esc(d.room || d.name)}</b><small>${esc(d.name)}, ${d.kind === 'app' ? 'Android app' : 'web'}</small>${d.sees ? `<small>Sees ${esc(d.sees.name)}</small>` : ''}</span>${d.id === me.id ? '<span class="badge soft">This one</span>' : ''}${d.id === holder.id ? '<span class="badge">Caden</span>' : ''}</div>`).join('')}
       </div>
       <div class="card"><h3>Senses</h3>
         ${toggleRow('mic', 'Listen for my name', `Hearing: ${esc(ears.engine || hearingEngines()[0] || 'not supported')}`)}
@@ -690,14 +691,14 @@ function panel(tab) {
       <div class="card"><h3>What I remember</h3>
         ${memories.length ? memories.map((m) => `<div class="line"><span class="grow">${esc(m.fact)}<small>${esc(m.who || '')}</small></span><button class="btn small ghost" data-act="forget" data-id="${m.id}">Forget</button></div>`).join('') : '<div class="empty">Nothing yet. Tell me things worth remembering.</div>'}
       </div>
-      ${isNative ? '' : '<a class="btn" href="caden.apk" download>Get the Android app</a>'}
-      <p class="fine" style="text-align:center">Caden · powered by Cloak · <a href="https://usecloak.org" target="_blank" rel="noopener" style="color:inherit">usecloak.org</a></p>`;
+      ${isNative ? '' : '<a class="btn" href="caden.apk" download><i class="ph ph-android-logo" aria-hidden="true"></i>Get the Android app</a>'}
+      <p class="fine foot">Powered by <a href="https://usecloak.org" target="_blank" rel="noopener">Cloak</a></p>`;
   }
   if (tab === 'people') {
     const list = alive();
     return `
       <div class="card"><h3>Add someone</h3>
-        <p class="fine" style="margin:0">Look at this screen. I'll take a few quick looks — only a face fingerprint is saved, never a picture.</p>
+        <p class="fine" style="margin:0">Look at this screen while I take a few quick looks. I only keep a face fingerprint, never a picture.</p>
         <div class="field"><label for="pName">Name</label><input class="input" id="pName" placeholder="Their name" maxlength="20"></div>
         <div class="cam-box" id="camBox" hidden><span class="ring"></span><span class="prog"><i id="camProg"></i></span></div>
         <button class="btn primary" data-act="enroll" id="btnEnroll">Learn this face</button>
@@ -727,7 +728,7 @@ function panel(tab) {
   // turns
   const list = turns.slice().reverse();
   return `
-    ${list.length ? list.slice(0, 80).map((t) => `<div class="turn"><div class="meta"><span>${esc(t.who)}</span><span>· ${roomIcon(t.room)} ${esc(t.room || t.device)}</span><span>· ${new Date(t.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span></div><div class="q">${esc(t.text)}</div><div class="a">${esc(t.reply || '…')}</div></div>`).join('') : '<div class="empty">No turns yet. Say "Hey Caden".</div>'}
+    ${list.length ? list.slice(0, 80).map((t) => `<div class="turn"><div class="meta"><span><i class="ph ph-user" aria-hidden="true"></i>${esc(t.who)}</span><span>${roomIcon(t.room)}${esc(t.room || t.device)}</span><span><i class="ph ph-clock" aria-hidden="true"></i>${new Date(t.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span></div><div class="q">${esc(t.text)}</div><div class="a">${esc(t.reply || '…')}</div></div>`).join('') : '<div class="empty">No turns yet. Say "Hey Caden".</div>'}
     ${list.length ? '<button class="btn small ghost danger" data-act="clearTurns">Clear history on every device</button>' : ''}`;
 }
 
