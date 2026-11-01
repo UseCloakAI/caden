@@ -10,13 +10,20 @@ export function startGlobe(canvas) {
   let W = 0, H = 0, R = 0, cx = 0, cy = 0, dpr = 1, spin = 0.6, last = performance.now(), raf = 0, drawn = false;
   const tilt = -0.38; // radians: the north pole leans toward the viewer
   const resize = () => {
-    dpr = Math.min(devicePixelRatio || 1, 2);
+    dpr = Math.min(devicePixelRatio || 1, 1.5); // hairlines don't need more
     W = innerWidth; H = innerHeight;
-    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     // the whole sphere, lower right, sitting into the wave's band
     R = Math.min(W * 0.3, H * 0.44);
-    cx = W - R * 0.92 - W * 0.03; cy = H - R * 0.78;
+    const gx = W - R * 0.92 - W * 0.03, gy = H - R * 0.78;
+    // the canvas covers only the globe's box (clipped by the screen), not the
+    // whole screen: far fewer pixels to clear and composite
+    const x0 = Math.max(0, Math.floor(gx - R - 2)), y0 = Math.max(0, Math.floor(gy - R - 2));
+    const x1 = Math.min(W, Math.ceil(gx + R + 2)), y1 = Math.min(H, Math.ceil(gy + R + 2));
+    Object.assign(canvas.style, { left: x0 + 'px', top: y0 + 'px', width: (x1 - x0) + 'px', height: (y1 - y0) + 'px', inset: 'auto' });
+    canvas.width = Math.round((x1 - x0) * dpr); canvas.height = Math.round((y1 - y0) * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, -x0 * dpr, -y0 * dpr);
+    cx = gx; cy = gy;
+    W = x1; H = y1; // clearRect below covers this box
     drawn = false;
   };
   // rotate a point on the unit sphere (lat, lon) by the spin and tilt, project
