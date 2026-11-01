@@ -41,7 +41,7 @@ let home = store.get('home');              // { code, id }
 let people = store.get('people', []);      // [{id,name,color,d:[...],updated,deleted?}]
 let turns = [];
 let memories = [];
-const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false, voiceEngine: 'nvidia', nvVoice: NV_VOICE, locate: true, voiceCal: null, sfx: true, sfxVol: 0.6, volume: 100, dim: 0, wakeHere: true }, store.get('settings', {}));
+const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false, voiceEngine: 'nvidia', nvVoice: NV_VOICE, locate: true, voiceCal: null, sfx: true, sfxVol: 0.6, volume: 100, dim: 0, wakeHere: true, quality: 'auto' }, store.get('settings', {}));
 const saveSettings = () => store.set('settings', settings);
 
 const devices = new Map();                 // id -> {id,name,room,kind,last,holder,epoch,sees,phase}
@@ -1243,6 +1243,33 @@ function wakeCard() {
   </div>`;
 }
 
+// Quality: Auto / Low / Medium / High. Same animations everywhere; lower levels
+// draw the wave with fewer strands at a lower resolution and drop the blur.
+const QUALITIES = ['auto', 'low', 'medium', 'high'];
+const QUALITY_NOTE = {
+  auto: (l) => `Picks for this device and steps down if it struggles. Now: ${l}.`,
+  low: () => 'For older or slower screens. Solid panels, a lighter wave at 30 frames a second.',
+  medium: () => 'A lighter wave and softer glass.',
+  high: () => 'Full glass and the full wave.',
+};
+function qualityCard() {
+  const i = QUALITIES.indexOf(settings.quality);
+  const level = document.documentElement.dataset.quality || 'high';
+  return `<div class="card"><h3>Display</h3>
+    <div class="quality">
+      <label for="sQuality" class="sr">Quality</label>
+      <input type="range" id="sQuality" min="0" max="3" step="1" value="${i < 0 ? 0 : i}" aria-valuetext="${settings.quality}">
+      <div class="stops" aria-hidden="true">${QUALITIES.map((q, k) => `<span class="${k === i ? 'on' : ''}">${q[0].toUpperCase() + q.slice(1)}</span>`).join('')}</div>
+      <p class="fine" id="qualityNote" style="margin:0">${QUALITY_NOTE[settings.quality](level)}</p>
+    </div>
+  </div>`;
+}
+function refreshQuality() {
+  const note = $('qualityNote');
+  if (note) note.textContent = QUALITY_NOTE[settings.quality](document.documentElement.dataset.quality || 'high');
+  document.querySelectorAll('.quality .stops span').forEach((el, k) => el.classList.toggle('on', QUALITIES[k] === settings.quality));
+}
+
 function toggleRow(key, label, sub) {
   return `<label class="line"><span class="grow">${label}<small>${sub}</small></span><input type="checkbox" class="toggle" data-set="${key}" ${settings[key] ? 'checked' : ''}></label>`;
 }
@@ -1266,6 +1293,7 @@ function panel(tab) {
         <div class="field"><label for="sRoom">Room</label><input class="input" id="sRoom" value="${esc(me.room)}" maxlength="24" list="roomList"><datalist id="roomList">${ROOMS.map((r) => `<option value="${r}">`).join('')}</datalist></div>
         <button class="btn small primary" data-act="saveDevice">Save</button>
       </div>
+      ${qualityCard()}
       ${NativeApp()?.wake ? wakeCard() : ''}
       <div class="card"><h3>Devices (${devs.length})</h3>
         ${devs.map((d) => `<div class="line"><span class="avatar" style="background:var(--bg2);color:var(--ink)">${roomIcon(d.room)}</span><span class="grow"><b>${esc(d.room || d.name)}</b><small>${esc(d.name)}, ${d.kind === 'app' ? 'Android app' : 'web'}</small>${d.sees ? `<small>Sees ${esc(d.sees.name)}</small>` : ''}</span>${linkBadge(d.id)}${d.id === me.id ? '<span class="badge soft">This one</span>' : ''}${d.id === holder.id ? '<span class="badge">Caden</span>' : ''}</div>`).join('')}
@@ -1368,6 +1396,16 @@ function bindPanel(host) {
   if (eng) eng.onchange = () => { settings.engine = eng.value; saveSettings(); if (settings.mic) { ears.stop(); ears.start(settings.engine); } };
   const qrBox = host.querySelector('#qrShow');
   if (qrBox && !qrBox.hidden) qrSvg(qrBox.dataset.link).then((svg) => { qrBox.innerHTML = svg; }).catch(() => { qrBox.textContent = 'Couldn\'t draw the QR code. Use Copy link instead.'; });
+  const ql = host.querySelector('#sQuality');
+  if (ql) ql.oninput = () => {
+    const q = QUALITIES[Number(ql.value)] || 'auto';
+    if (q === settings.quality) return;
+    settings.quality = q; saveSettings();
+    ql.setAttribute('aria-valuetext', q);
+    sfx.play('tick', { dir: 1 });
+    orb.setQuality(q);
+    refreshQuality();
+  };
   const vol = host.querySelector('#sSfxVol');
   if (vol) vol.oninput = () => { settings.sfxVol = Number(vol.value); sfx.setVolume(settings.sfxVol); saveSettings(); };
   const nv = host.querySelector('#sNvVoice');
@@ -1482,6 +1520,8 @@ addEventListener('resize', () => renderDock());
 function boot() {
   orb = new Wave($('wave'));            // Caden is the wave
   orb.speech = () => mouth.level();      // speaking swells it with the real voice
+  orb.onLevel = (level) => { document.documentElement.dataset.quality = level; if (sheetTab === 'home' && $('sheetHost').firstElementChild) refreshQuality(); };
+  orb.setQuality(settings.quality);
   orb.mirror = $('orb'); orb.set('idle');
   miniOrb = quietOrb;
   miniOrb.set('sleepy');

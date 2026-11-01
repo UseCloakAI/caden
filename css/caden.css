@@ -636,3 +636,34 @@ html.resting .hint { visibility: hidden; }
 @media (max-width: 720px) { .clock b { font-size: 200px; } }
 @media (prefers-reduced-motion: reduce) { .clock b, .clock span { transition: opacity var(--t-std); } }
 .clock:not(.placed) b, .clock:not(.placed) span { opacity: 0; }
+
+/* the wave canvas only covers its band; js sets top/height */
+.wave { inset: 0 0 auto 0; height: 100%; }
+
+/* quality (Settings > Display; html[data-quality] is the level in effect).
+   Motion is identical at every level; only how it's drawn changes. */
+html[data-quality="low"] *, html[data-quality="low"] *::before, html[data-quality="low"] *::after {
+  -webkit-backdrop-filter: none !important; backdrop-filter: none !important;
+}
+html[data-quality="low"] { --card: rgba(236, 245, 253, 0.9); --sh: 0 6px 14px -10px rgba(18, 78, 138, 0.45); --sh-lg: 0 10px 22px -14px rgba(18, 78, 138, 0.5); }
+html.night[data-quality="low"] { --card: rgba(14, 38, 72, 0.94); --sh: 0 6px 14px -10px rgba(0, 0, 0, 0.6); --sh-lg: 0 10px 22px -14px rgba(0, 0, 0, 0.65); }
+html[data-quality="low"] .sheet, html[data-quality="low"] .wheel-ring { background: rgba(236, 245, 253, 0.97); }
+html.night[data-quality="low"] .sheet, html.night[data-quality="low"] .wheel-ring, html.night[data-quality="low"] .toast { background: rgba(10, 30, 60, 0.97); }
+html[data-quality="medium"] .sheet, html[data-quality="medium"] .wheel-ring, html[data-quality="medium"] .rooms {
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+}
+
+/* the quality slider */
+.quality { display: grid; gap: 8px; }
+.quality input[type="range"] { width: 100%; accent-color: var(--acc); }
+.quality .stops { display: grid; grid-template-columns: repeat(4, 1fr); font-size: 13px; font-weight: 500; color: var(--ink3); }
+.quality .stops span:nth-child(2) { text-align: center; translate: -33% 0; }
+.quality .stops span:nth-child(3) { text-align: center; translate: 33% 0; }
+.quality .stops span:last-child { text-align: right; }
+.quality .stops span.on { color: var(--ink); font-weight: 600; }
+.quality .stops { display: block; position: relative; height: 18px; }
+.quality .stops span { position: absolute; top: 0; white-space: nowrap; translate: -50% 0 !important; text-align: center !important; }
+.quality .stops span:nth-child(1) { left: 9px; translate: -9px 0 !important; }
+.quality .stops span:nth-child(2) { left: calc(9px + (100% - 18px) / 3); }
+.quality .stops span:nth-child(3) { left: calc(9px + (100% - 18px) * 2 / 3); }
+.quality .stops span:nth-child(4) { left: calc(100% - 9px); translate: calc(-100% + 9px) 0 !important; }
