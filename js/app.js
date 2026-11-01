@@ -672,6 +672,37 @@ $('typebar').addEventListener('submit', (e) => {
 function applyTyping() { $('typebar').hidden = !settings.typing; }
 $('btnSettings').onclick = () => openSheet('home');
 
+// ── full screen (desktop) ───────────────────────────────────────────────────
+// Desktop browsers only: a mouse/trackpad, and the Fullscreen API. Phones and
+// the Android app already run edge to edge. F toggles it too.
+const canFull = () => !isNative && document.fullscreenEnabled && matchMedia('(hover: hover) and (pointer: fine)').matches;
+function syncFull() {
+  const btn = $('btnFull');
+  btn.hidden = !canFull();
+  const on = !!document.fullscreenElement;
+  btn.setAttribute('aria-pressed', String(on));
+  btn.setAttribute('aria-label', on ? 'Exit full screen' : 'Full screen');
+  btn.title = on ? 'Exit full screen (F)' : 'Full screen (F)';
+  btn.querySelector('.ph').className = `ph ph-corners-${on ? 'in' : 'out'}`;
+}
+async function toggleFull() {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+  } catch { toast("Full screen isn't available here."); }
+}
+$('btnFull').onclick = () => { mouth.unlock(); toggleFull(); };
+document.addEventListener('fullscreenchange', () => { syncFull(); requestWake(); renderDock(); });
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'f' && e.key !== 'F') return;
+  if (e.ctrlKey || e.metaKey || e.altKey || sheetTab || !home || !canFull()) return;
+  if (e.target.closest('input, textarea, select, [contenteditable]')) return;
+  e.preventDefault();
+  toggleFull();
+});
+matchMedia('(hover: hover) and (pointer: fine)').addEventListener('change', syncFull);
+syncFull();
+
 // ── settings sheet ───────────────────────────────────────────────────────────
 let sheetTab = null;
 function openSheet(tab) { sheetTab = tab; renderSheet(); }

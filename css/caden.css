@@ -83,6 +83,10 @@ button { cursor: pointer; }
 }
 .icon-btn:active { scale: .9; transition-duration: 90ms; }
 #btnSettings:hover { rotate: 45deg; }
+/* Full screen: corners spread on hover (out) or pinch in (in) */
+#btnFull .ph { transition: scale var(--t-std) var(--e-pop); }
+#btnFull:hover .ph { scale: 1.15; }
+#btnFull[aria-pressed="true"]:hover .ph { scale: .88; }
 .field { display: grid; gap: 6px; }
 .field label { font-weight: 800; font-size: 13px; color: var(--ink2); letter-spacing: .02em; }
 .input {
