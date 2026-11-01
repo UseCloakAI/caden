@@ -218,7 +218,8 @@ export class Mouth extends EventTarget {
   }
 
   // Use NVIDIA Magpie through the Cloak API (/v1/speech), or null for the device voice.
-  useNvidia(cfg) { this.nv = cfg; }
+  // a new voice or setting gets a fresh chance: clear the after-error pause
+  useNvidia(cfg) { this.nv = cfg; this.nvDownUntil = 0; }
   get nvActive() { return !!this.nv && Date.now() > this.nvDownUntil; }
 
   voices() {
@@ -275,7 +276,7 @@ export class Mouth extends EventTarget {
   async _fetch(text, signal) {
     const { url, headers, voice, lang } = this.nv;
     const r = await fetch(url, { method: 'POST', headers, signal, body: JSON.stringify({ text, voice, lang }) });
-    if (!r.ok) { let e = `voice ${r.status}`; try { e = (await r.json()).error || e; } catch { /* not json */ } throw new Error(e); }
+    if (!r.ok) { let e = ''; try { e = (await r.json()).error || ''; } catch { /* not json */ } throw new Error(`voice ${r.status}${e ? ': ' + e : ''}`); }
     const blob = await r.blob();
     blob.track = await speechTrack(blob).catch(() => null); // the wave reads this while it plays
     return blob;
@@ -311,7 +312,9 @@ export class Mouth extends EventTarget {
       } catch (e) {
         if (this.cur !== id) return;
         console.warn('[caden] NVIDIA voice failed, using the device voice', e);
-        this.nvDownUntil = Date.now() + 60_000;
+        // the service being down pauses NVIDIA for a minute; a rejected request
+        // (bad voice or text, 4xx) only falls back for this sentence
+        if (!/voice 4\d\d/.test(String(e.message || e))) this.nvDownUntil = Date.now() + 60_000;
         this._emit('fallback', String(e.message || e));
       }
     }
