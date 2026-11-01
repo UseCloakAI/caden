@@ -280,8 +280,32 @@ export class Mouth extends EventTarget {
     this._device(item.text, id);
   }
 
+  // How loud Caden's voice is right now (0..1), for the wave. Needs a running
+  // AudioContext (set by the app after the first tap); otherwise 0 and the
+  // wave falls back to syllable pulses.
+  level() {
+    if (!this._an || !this.busy || this.audio?.paused) return 0;
+    const b = this._buf || (this._buf = new Float32Array(this._an.fftSize));
+    this._an.getFloatTimeDomainData(b);
+    let s = 0; for (const v of b) s += v * v;
+    return Math.min(1, Math.sqrt(s / b.length) * 4);
+  }
+
+  _meter(a) {
+    const ctx = this.audioCtx;
+    if (this._an || !ctx || ctx.state !== 'running') return;
+    try {
+      const src = ctx.createMediaElementSource(a);
+      this._an = ctx.createAnalyser();
+      this._an.fftSize = 1024;
+      src.connect(this._an);
+      this._an.connect(ctx.destination);
+    } catch { /* already routed or not allowed: no meter */ }
+  }
+
   async _play(blob, id) {
     const a = this._player();
+    this._meter(a);
     const url = URL.createObjectURL(blob);
     const done = () => { URL.revokeObjectURL(url); a.onended = a.onerror = null; this._done(id); };
     a.onended = done;

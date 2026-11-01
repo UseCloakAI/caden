@@ -17,18 +17,18 @@
 <link rel="stylesheet" href="css/caden.css">
 </head>
 <body>
+<div class="sky" aria-hidden="true"><div class="sky-layer sky-day"></div><div class="sky-layer sky-night"></div></div>
+<canvas id="wave" class="wave" aria-hidden="true"></canvas>
 
 <header class="top" id="top" hidden>
-  <div class="word"><i aria-hidden="true"></i>caden</div>
-  <div class="where" id="where"></div>
-  <div class="spacer"></div>
-  <div class="dots" role="status" aria-label="Status">
-    <span class="dot" id="dotNet" title="Home link"></span>
-    <span class="dot" id="dotMic" title="Hearing"></span>
-    <span class="dot" id="dotCam" title="Seeing"></span>
+  <button class="options-btn" id="btnOptions" aria-label="Options" aria-haspopup="menu" aria-expanded="false"><i class="ph ph-dots-nine" aria-hidden="true"></i></button>
+  <!-- status + controls live in the wheel and Settings now; kept for the code that updates them -->
+  <div hidden>
+    <div class="where" id="where"></div>
+    <span class="dot" id="dotNet"></span><span class="dot" id="dotMic"></span><span class="dot" id="dotCam"></span>
+    <button id="btnFull" aria-pressed="false" hidden><i class="ph ph-corners-out" aria-hidden="true"></i></button>
+    <button id="btnSettings"><i class="ph ph-gear" aria-hidden="true"></i></button>
   </div>
-  <button class="icon-btn" id="btnFull" aria-label="Full screen" aria-pressed="false" title="Full screen (F)" hidden><i class="ph ph-corners-out" aria-hidden="true"></i></button>
-  <button class="icon-btn" id="btnSettings" aria-label="Settings"><i class="ph ph-gear" aria-hidden="true"></i></button>
 </header>
 
 <main class="stage" id="stage" hidden>
@@ -44,7 +44,6 @@
   </section>
 
   <section class="away" id="away" hidden aria-live="polite">
-    <div class="mini"><div id="miniOrb"></div></div>
     <h2 id="awayTitle">Caden is in another room</h2>
     <p id="awaySub"></p>
     <button class="btn primary" id="btnSummon">Call Caden here</button>
@@ -63,7 +62,6 @@
 <!-- onboarding -->
 <section class="setup" id="setup" hidden>
   <div class="setup-card">
-    <div class="orb-slot"><div id="setupOrb"></div></div>
 
     <div class="step" data-step="hello">
       <h1>Hi, I'm Caden.</h1>

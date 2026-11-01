@@ -14,7 +14,9 @@ import { Mesh } from './mesh.js';
 import { Faces } from './faces.js';
 import { Ears, Mouth, findWake, normalize, hearingEngines } from './voice.js';
 import { think, homeContext, homeId, brainSync, brainForget, brainClear, stripRemember } from './brain.js';
-import { Orb, E } from './orb.js';
+import { E } from './orb.js';
+import { Wave, quietOrb } from './wave.js';
+import { Wheel } from './wheel.js';
 import { Hands } from './hands.js';
 import { AirNav } from './airnav.js';
 import { Meter, score, pickLoudest } from './locate.js';
@@ -63,7 +65,7 @@ const hands = new Hands();
 const qrScan = new QrScanner($('cam'));
 const meter = new Meter(); // wake-word loudness, for finding the nearest device
 let air = null; // AirNav, built at boot (needs the DOM)
-let orb, miniOrb, setupOrb;
+let orb, miniOrb, setupOrb, wheel;
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const alive = () => people.filter((p) => !p.deleted);
@@ -545,6 +547,7 @@ function renderView(animate = false) {
   $('where').innerHTML = `${roomIcon(me.room)}${esc(me.room || me.name)}`;
   const here = iHold() || moving;
   document.documentElement.classList.toggle('is-away', !here);
+  if (!moving) orb?.setAway?.(!here);
   $('here').hidden = !here;
   $('away').hidden = here;
   $('clock').style.opacity = here ? '1' : '.5';
@@ -627,6 +630,9 @@ function placePuck() {
 
 function tickClock() {
   const d = new Date();
+  // Ribbon's sky: day 7am-7pm, night otherwise (or when the device is in dark mode)
+  const night = d.getHours() < 7 || d.getHours() >= 19 || matchMedia('(prefers-color-scheme: dark)').matches;
+  document.documentElement.classList.toggle('night', night);
   $('clockTime').textContent = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   $('clockDate').textContent = d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
 }
@@ -701,12 +707,13 @@ hands.addEventListener('gesture', (e) => {
   } else if (name === 'thumbsDown') {
     // Back: close Settings, or stop Caden mid-sentence, or end listening.
     air?.flash('thumbsDown', 'Back');
-    if (sheetTab) closeSheet();
+    if (wheel?.open) wheel.close();
+    else if (sheetTab) closeSheet();
     else if (iHold() && (mouth.speaking || phase === 'thinking')) orbTap();
     else if (mode === 'command') { mode = 'wait'; if (iHold()) setPhase('idle'); }
   } else if (name === 'swipe') {
-    sfx.play('swish', { pan: dir * 0.5 });
-    air?.swipe(dir);
+    if (wheel?.open) wheel.step(dir);
+    else { sfx.play('swish', { pan: dir * 0.5 }); air?.swipe(dir); }
   }
 });
 
@@ -976,6 +983,21 @@ document.addEventListener('keydown', (e) => {
 });
 matchMedia('(hover: hover) and (pointer: fine)').addEventListener('change', syncFull);
 syncFull();
+
+// ── the options wheel (top-left button) ─────────────────────────────────────
+function buildWheel() {
+  const items = [
+    { id: 'talk', icon: 'microphone', label: 'Talk', run: () => { mouth.unlock(); sfx.unlock(); if (iHold()) listenNow(); else claim('voice', freshSight() ? lastSight.person : null); } },
+    { id: 'here', icon: 'hand-waving', label: 'Call Caden here', run: () => { if (!iHold()) claim('tap', freshSight() ? lastSight.person : null); else orb.hop(); } },
+    { id: 'home', icon: 'house', label: 'Home', run: () => openSheet('home') },
+    { id: 'people', icon: 'users-three', label: 'People', run: () => openSheet('people') },
+    { id: 'voice', icon: 'waveform', label: 'Voice', run: () => openSheet('voice') },
+    { id: 'turns', icon: 'chats-circle', label: 'Turns', run: () => openSheet('turns') },
+    { id: 'display', icon: 'hand-pointing', label: 'Touch-free', run: () => { settings.display = !settings.display; saveSettings(); applyDisplay(); toast(settings.display ? 'Touch-free on. Point with your hand.' : 'Touch-free off.'); } },
+    { id: 'full', icon: 'corners-out', label: 'Full screen', run: () => toggleFull() },
+  ];
+  return new Wheel($('btnOptions'), items.filter((it) => it.id !== 'full' || canFull()));
+}
 
 // ── app updates (Android app; see Updater.java) ──────────────────────────────
 // Web builds download in the background and apply on the next idle moment;
@@ -1282,17 +1304,38 @@ addEventListener('resize', () => renderDock());
 
 // ── boot ─────────────────────────────────────────────────────────────────────
 function boot() {
-  orb = new Orb($('orb'));
-  miniOrb = new Orb($('miniOrb'));
+  orb = new Wave($('wave'));            // Caden is the wave
+  orb.speech = () => mouth.level();      // speaking swells it with the real voice
+  orb.mirror = $('orb'); orb.set('idle');
+  miniOrb = quietOrb;
   miniOrb.set('sleepy');
-  setupOrb = new Orb($('setupOrb'));
-  $('orb').addEventListener('click', orbTap);
+  setupOrb = { ...quietOrb, hop: () => orb.hop() };
+  wheel = buildWheel();
+  // Touch the wave: tap to talk; drag across it and it surges under your
+  // finger with soft plucks pitched by height (Ribbon's value sound).
+  let waveDrag = null;
+  $('orb').addEventListener('pointerdown', (e) => { waveDrag = { x: e.clientX, y: e.clientY, moved: 0, last: 0 }; });
+  addEventListener('pointermove', (e) => {
+    if (!waveDrag) return;
+    const dx = e.clientX - waveDrag.x;
+    waveDrag.moved += Math.abs(dx) + Math.abs(e.clientY - waveDrag.y);
+    waveDrag.x = e.clientX; waveDrag.y = e.clientY;
+    orb.energy += dx * 0.02;
+    orb.pulse = Math.min(1, orb.pulse + Math.abs(dx) * 0.004);
+    const now = performance.now();
+    if (waveDrag.moved > 12 && now - waveDrag.last > 90) { waveDrag.last = now; sfx.play('value', { value: 1 - e.clientY / innerHeight, pan: (e.clientX / innerWidth) * 2 - 1, gain: 0.7 }); }
+  });
+  addEventListener('pointerup', () => { if (waveDrag && waveDrag.moved > 12) waveDrag.dragged = true; setTimeout(() => (waveDrag = null), 0); });
+  $('orb').addEventListener('click', (e) => { if (waveDrag?.dragged) { e.stopImmediatePropagation(); return; } orbTap(); });
   $('orb').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); orbTap(); } });
   document.addEventListener('pointerdown', () => { mouth.unlock(); sfx.unlock(); }, { once: true });
   document.addEventListener('keydown', () => sfx.unlock(), { once: true });
   sfx.enabled = settings.sfx;
   sfx.setVolume(settings.sfxVol);
   sfx.unlock(); // allowed in the app and on kiosks; elsewhere it waits for the first tap
+  const giveVoiceMeter = () => { if (sfx.ctx) mouth.audioCtx = sfx.ctx; };
+  giveVoiceMeter();
+  document.addEventListener('pointerdown', giveVoiceMeter, { once: true });
   mouth.rate = settings.rate;
   mouth.voiceName = settings.voice;
   applyVoice();
@@ -1301,7 +1344,7 @@ function boot() {
   stopEnroll();
   air = new AirNav();
   air.onPress = () => sfx.play('click');
-  if (/[?&]debug\b/.test(location.search)) window.__caden = { setWide: (v) => setWide(v), appendSaid: (t) => appendSaid(t), hands, air, settings, mesh, meter, sfx, onHeard, holder: () => holder, lastLocate: () => lastLocate }; // test hook
+  if (/[?&]debug\b/.test(location.search)) window.__caden = { wheel: () => wheel, setWide: (v) => setWide(v), appendSaid: (t) => appendSaid(t), hands, air, settings, mesh, meter, sfx, onHeard, holder: () => holder, lastLocate: () => lastLocate }; // test hook
   // #display boots straight into touch-free mode (kiosk screens).
   if (/(^|[#&])display\b/.test(location.hash)) { settings.display = true; saveSettings(); }
   applyDisplay();
