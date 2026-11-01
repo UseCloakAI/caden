@@ -734,3 +734,36 @@ html.locked .wave { opacity: .25; transition: opacity var(--t-slow) var(--e-sine
 .clock { z-index: 6; }
 html.locked #stage { z-index: 92; } /* #stage is fixed, so it is its own stacking layer: lift the whole layer over the dimmer (only the clock shows) */
 html.locked .toast { opacity: 0 !important; }
+
+/* Caden's words: large, centred in the space between the top bar and the
+   wave, left-aligned in a readable column. Long replies step down a size
+   and scroll in place. */
+.here, .here.wide {
+  display: flex; flex-direction: column; justify-content: center;
+  height: calc(100dvh - var(--bar) - var(--wave-h) - 8px); padding: 0 max(28px, env(safe-area-inset-left), 7vw) 0 max(28px, env(safe-area-inset-right), 7vw);
+}
+.caption, .here.wide .caption {
+  width: 100%; max-width: min(1180px, 100%); margin: 0 auto; max-height: 100%;
+  padding: 4px 2px 22px; gap: 14px;
+}
+.caption .you { font-size: clamp(17px, 2.3vmin, 26px); font-weight: 500; color: var(--ink2); letter-spacing: -0.01em; }
+.caption .you:empty { display: none; }
+.caption .said, .here.wide .caption .said {
+  font-size: clamp(30px, 5.4vmin, 64px); line-height: 1.14; letter-spacing: -0.03em; font-weight: 500;
+  max-width: 24ch; text-wrap: pretty;
+}
+.here.long .caption .said { font-size: clamp(24px, 3.9vmin, 46px); line-height: 1.2; max-width: 34ch; }
+@media (max-width: 720px) {
+  .here, .here.wide { padding: 0 22px; }
+  .caption .said, .here.wide .caption .said { font-size: clamp(26px, 7.2vw, 34px); max-width: none; }
+  .here.long .caption .said { font-size: clamp(21px, 5.6vw, 26px); }
+}
+/* bigger still on tablets; toasts sit just above the rooms bar, never on the words */
+.caption .said, .here.wide .caption .said { font-size: clamp(32px, 6.4vmin, 72px); }
+.here.long .caption .said { font-size: clamp(25px, 4.4vmin, 50px); }
+.caption, .here.wide .caption { max-height: calc(100dvh - var(--bar) - var(--wave-h) - 16px); }
+.stage ~ .toast, body > .toast { bottom: calc(max(14px, env(safe-area-inset-bottom)) + 78px) !important; top: auto !important; }
+@media (max-width: 720px) {
+  .caption .said, .here.wide .caption .said { font-size: clamp(26px, 7.4vw, 34px); }
+  .here.long .caption .said { font-size: clamp(21px, 5.6vw, 26px); }
+}
