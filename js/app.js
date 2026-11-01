@@ -227,6 +227,7 @@ async function leaveHere(to, reason) {
   renderView(true);
   $('capYou').innerHTML = '';
   $('capSaid').textContent = '';
+  setWide(false);
 }
 
 async function arriveHere(from, reason, person) {
@@ -413,6 +414,7 @@ async function runTurn(text, who) {
   mesh.send('turn', { turn });
   $('capYou').innerHTML = who ? `<b>${esc(who.name)}</b>“${esc(text)}”` : `“${esc(text)}”`;
   $('capSaid').textContent = '';
+  setWide(false);
   setPhase('thinking');
   sfx.play('send');
 
@@ -461,8 +463,40 @@ function afterSpeaking() {
   ears.resume();
   if (!iHold()) return;
   activity = now();
+  // A while after a long answer, step back to the middle.
+  if (wide) { clearTimeout(wideT); wideT = setTimeout(() => { if (!streaming && !mouth.speaking && phase !== 'thinking') setWide(false); }, 25000); }
   if (settings.followUp && phase !== 'idle') { mode = 'command'; modeUntil = now() + TUNING.followUpMs; setPhase('listening'); }
   else setPhase('idle');
+}
+
+// ── long replies: Caden steps aside (FLIP tween) ────────────────────────────
+let wide = false, wideT = null;
+function setWide(on) {
+  clearTimeout(wideT);
+  const here = $('here');
+  if (wide === on) return;
+  wide = on;
+  if (here.hidden) { here.classList.toggle('wide', on); return; }
+  const slot = here.querySelector('.orb-slot'), cap = here.querySelector('.caption');
+  const first = slot.getBoundingClientRect();
+  here.classList.toggle('wide', on);
+  const last = slot.getBoundingClientRect();
+  if (reduced() || !last.width) return;
+  const dx = first.left - last.left, dy = first.top - last.top, k = first.width / last.width;
+  slot.animate([
+    { transformOrigin: '0 0', transform: `translate(${dx}px, ${dy}px) scale(${k})` },
+    { transformOrigin: '0 0', transform: 'translate(0, 0) scale(1)' },
+  ], { duration: 720, easing: 'cubic-bezier(.34,1.3,.64,1)' });
+  cap.animate(on
+    ? [{ opacity: 0, transform: 'translateX(28px)' }, { opacity: 1, transform: 'none' }]
+    : [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }],
+  { duration: 520, delay: 120, easing: 'cubic-bezier(.2,.8,.3,1)', fill: 'backwards' });
+}
+function fitCaption() {
+  const cap = document.querySelector('.here .caption'), said = $('capSaid');
+  if (!wide && (said.textContent.length > 160 || cap.scrollHeight > cap.clientHeight + 4)) setWide(true);
+  // follow the newest words unless someone scrolled up to reread
+  if (cap.scrollHeight - cap.scrollTop - cap.clientHeight < 80 || !cap.dataset.read) cap.scrollTop = cap.scrollHeight;
 }
 
 function showSaid(text) { $('capSaid').innerHTML = ''; appendSaid(text); }
@@ -483,6 +517,7 @@ function appendSaid(text) {
   el.appendChild(frag);
   // Keep the caption to the last few lines.
   while (el.childNodes.length > 160) el.removeChild(el.firstChild);
+  fitCaption();
 }
 
 // ── seeing ───────────────────────────────────────────────────────────────────
@@ -1266,7 +1301,7 @@ function boot() {
   stopEnroll();
   air = new AirNav();
   air.onPress = () => sfx.play('click');
-  if (/[?&]debug\b/.test(location.search)) window.__caden = { hands, air, settings, mesh, meter, sfx, onHeard, holder: () => holder, lastLocate: () => lastLocate }; // test hook
+  if (/[?&]debug\b/.test(location.search)) window.__caden = { setWide: (v) => setWide(v), appendSaid: (t) => appendSaid(t), hands, air, settings, mesh, meter, sfx, onHeard, holder: () => holder, lastLocate: () => lastLocate }; // test hook
   // #display boots straight into touch-free mode (kiosk screens).
   if (/(^|[#&])display\b/.test(location.hash)) { settings.display = true; saveSettings(); }
   applyDisplay();

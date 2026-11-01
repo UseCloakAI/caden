@@ -128,10 +128,22 @@ button { cursor: pointer; }
 .clock { text-align: center; pointer-events: none; transition: opacity .5s; flex: none; }
 .clock b { display: block; font-family: var(--fd); font-weight: 600; font-size: clamp(34px, 9vmin, 64px); letter-spacing: -.02em; }
 .clock span { color: var(--ink2); font-weight: 700; }
-.here { flex: 1; display: grid; justify-items: center; align-content: center; gap: 22px; }
+.here { flex: 1; min-height: 0; width: 100%; display: grid; grid-template-rows: auto minmax(0, auto) auto; justify-items: center; align-content: center; gap: 22px; }
+/* Long replies: Caden steps aside. Orb small on the left, words on the right
+   in a scrolling column that never runs under the dock (app.js setWide, FLIP). */
+.here.wide { --orb: min(26vmin, 220px); width: auto; max-width: min(1080px, 100%); justify-content: center; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); align-content: stretch; align-items: center; justify-items: start; column-gap: clamp(28px, 5vw, 72px); }
+.here.wide .orb-slot { grid-row: 1; grid-column: 1; }
+.here.wide .caption { grid-row: 1; grid-column: 2; text-align: left; max-width: 62ch; max-height: 100%; align-self: center; }
+.here.wide .caption .said { font-size: clamp(19px, 2.4vmin, 26px); line-height: 1.45; }
+.here.wide .hint { display: none; }
+@media (max-aspect-ratio: 1/1), (max-width: 720px) {
+  .here.wide { --orb: min(30vw, 130px); grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); justify-items: center; align-items: start; row-gap: 14px; }
+  .here.wide .orb-slot { grid-row: 1; grid-column: 1; }
+  .here.wide .caption { grid-row: 2; grid-column: 1; max-width: 100%; align-self: stretch; }
+}
 .here.gone { pointer-events: none; }
 .orb-slot { position: relative; width: var(--orb); height: var(--orb); }
-.caption { min-height: 76px; max-width: min(640px, 88vw); text-align: center; display: grid; gap: 6px; }
+.caption { min-height: 76px; min-height: 0; max-width: min(640px, 88vw); text-align: center; display: grid; align-content: start; gap: 6px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; -webkit-mask-image: linear-gradient(transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%); mask-image: linear-gradient(transparent 0, #000 18px, #000 calc(100% - 18px), transparent 100%); padding: 10px 6px; }
 .caption .you { color: var(--ink2); font-weight: 700; font-size: 16px; min-height: 20px; transition: opacity .3s; }
 .caption .you b { color: var(--ink); }
 .caption .you b::after { content: ''; display: inline-block; width: 8px; }
