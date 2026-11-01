@@ -2,6 +2,7 @@
 // Frames never leave the device. Only 128-number face descriptors are kept,
 // and they travel between a home's devices encrypted (see mesh.js).
 import { FACE_LIB, FACE_MODELS, TUNING } from './config.js';
+import * as camera from './camera.js';
 
 let faceapi = null;
 let loading = null;
@@ -61,11 +62,7 @@ export class Faces extends EventTarget {
     this.running = true;
     this._set('loading');
     try {
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: { ideal: 480 }, height: { ideal: 360 } }, audio: false,
-      });
-      this.video.srcObject = this.stream;
-      await this.video.play().catch(() => {});
+      await camera.acquire('faces');
       await loadFaceApi();
     } catch (e) {
       this.running = false;
@@ -81,9 +78,7 @@ export class Faces extends EventTarget {
   stop() {
     this.running = false;
     clearTimeout(this.t);
-    this.stream?.getTracks().forEach((t) => t.stop());
-    this.stream = null;
-    if (this.video) this.video.srcObject = null;
+    camera.release('faces');
     if (this.state === 'on' || this.state === 'loading') this._set('off');
   }
 

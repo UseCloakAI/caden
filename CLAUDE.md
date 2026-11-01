@@ -6,6 +6,7 @@ Multi-device home voice agent. Static web app (no build) + Android WebView wrapp
 - Bump `CACHE` in `sw.js` when shipping changes to shell files.
 - Design: one accent (coral; `--acc-ink` for coral text, `--on-acc` for text on coral fills), text colors checked against WCAG AA. Shapes: controls are pills, inputs 16px, cards/sheets 24px. Icons are Phosphor (`icons/ph`, vendored); no emoji, no hand-drawn SVG icons. Fonts are self-hosted (`fonts/`). No em-dashes or middot chains in UI copy.
 - Brain = Caden Supabase project (`wiimiqqmdmfikuqgqhtm`) edge function `brain`; model = Cloak `/v1/chat` `model:"home"` (NVIDIA key pool). Background/utility work must not use chat tiers.
+- Touch-free display mode (`html.display`, `settings.display`, `#display`): `js/body.js` turns pose landmarks into a pointer + gestures (pure `analyze(people, t)`, unit-testable), `js/airnav.js` owns the cursor/dwell/edge-scroll UI. Air targets exclude external links and downloads (a kiosk must not navigate away). Faces and body share `js/camera.js`; never open a second `getUserMedia`. `?debug` exposes `window.__caden` for tests.
 - Mesh payloads are always encrypted (`js/mesh.js`); never send plaintext over Realtime, and never send camera frames anywhere.
 - The holder protocol (claim / handoff / epoch) is in `js/app.js` — keep "highest epoch wins, ties to lower id".
 - Replies are spoken: keep `HOME_PLAYBOOK` (Cloak repo) and the `SPOKEN_NOTE` fallback in `supabase/functions/brain/index.ts` in sync.

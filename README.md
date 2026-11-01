@@ -25,6 +25,21 @@ One device **holds** Caden at a time (`js/app.js`).
 - Highest epoch wins, ties go to the lower device id — two devices can't both keep Caden. If the holder disappears, the device that sees someone (else the lowest id) picks it up.
 - Turns, people and presence sync over the mesh; the brain keeps the durable history, so a new device catches up on join.
 
+### Touch-free display mode
+
+For a screen with a webcam (wall display, kitchen laptop, TV box): Settings → Home → **Touch-free display**, or open the app with `#display` to boot straight into it. Navigation runs on full-body pose (MediaPipe Pose Landmarker, on device), which works from across the room, where hand tracking can't see fingers.
+
+| Do this | Caden does |
+|---|---|
+| Raise a hand | An air cursor follows it (mapped from a comfortable box beside your shoulder, so small moves reach every corner) |
+| Hold still on a control | A ring fills and it's pressed (900ms); the cursor snaps to nearby controls |
+| Point near the top/bottom of a list | It scrolls |
+| Wave | Calls Caden to this screen (or it waves back) |
+| Both hands over your head | Caden listens, like saying its name |
+| Swipe left/right | Switches Settings tabs |
+
+Targets get bigger, the type box hides, and a small stick-figure preview (drawn from landmarks, never the camera image) shows you're being tracked. External links are not pressable, so a kiosk can't navigate away. Faces and pose share one camera stream (`js/camera.js`). For an unattended kiosk, launch Chrome with `--autoplay-policy=no-user-gesture-required` so Caden can speak without a first tap.
+
 ### Turns
 
 Every exchange is a turn `{who, device, room, text, reply}`. `who` is the person recognized in front of the device (or the last speaker during a follow-up). The model sees the household conversation as `[Name] text` lines, so several people can take turns and Caden answers the right one. After answering, Caden keeps listening for ~8s without the wake word.
@@ -46,6 +61,9 @@ js/faces.js           face detection / recognition / enrollment
 js/voice.js           ears, mouth, wake-word matching
 js/brain.js           brain client (Supabase edge function, Cloak fallback)
 js/orb.js             the orb and its flights
+js/camera.js          one shared webcam stream (faces + body)
+js/body.js            pose → air pointer, wave / swipe / hands-up gestures
+js/airnav.js          air cursor, dwell press, edge scroll, gesture guide, skeleton preview
 js/config.js          endpoints + tuning
 android/              Android app: WebView serving the same files from assets + native speech bridge
 supabase/             brain edge function + migration

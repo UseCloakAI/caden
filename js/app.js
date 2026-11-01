@@ -14,6 +14,8 @@ import { Faces } from './faces.js';
 import { Ears, Mouth, findWake, normalize, hearingEngines } from './voice.js';
 import { think, homeContext, homeId, brainSync, brainForget, brainClear, stripRemember } from './brain.js';
 import { Orb, E } from './orb.js';
+import { Body } from './body.js';
+import { AirNav } from './airnav.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -33,7 +35,7 @@ let home = store.get('home');              // { code, id }
 let people = store.get('people', []);      // [{id,name,color,d:[...],updated,deleted?}]
 let turns = [];
 let memories = [];
-const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true }, store.get('settings', {}));
+const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false }, store.get('settings', {}));
 const saveSettings = () => store.set('settings', settings);
 
 const devices = new Map();                 // id -> {id,name,room,kind,last,holder,epoch,sees,phase}
@@ -54,6 +56,8 @@ const mesh = new Mesh(me.id);
 const ears = new Ears();
 const mouth = new Mouth();
 const faces = new Faces($('cam'));
+const body = new Body();
+let air = null; // AirNav, built at boot (needs the DOM)
 let orb, miniOrb, setupOrb;
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -507,9 +511,42 @@ ears.addEventListener('state', (e) => {
   dot('dotMic', state === 'on' ? 'on' : state === 'off' ? '' : 'off', state === 'on' ? `Hearing (${engine})` : state === 'unsupported' ? 'No microphone support here' : state === 'denied' ? 'Microphone blocked' : 'Not hearing');
   if (state === 'denied') toast('Microphone is blocked. Allow it in your browser settings.');
 });
-faces.addEventListener('state', (e) => {
-  const { state } = e.detail;
-  dot('dotCam', state === 'on' ? 'on' : state === 'loading' ? 'warn' : state === 'off' ? '' : 'off', { on: 'Seeing faces', loading: 'Waking up my eyes…', off: 'Camera off', denied: 'Camera blocked', error: 'Camera unavailable' }[state]);
+// The camera dot covers both faces and body tracking.
+function camDot() {
+  const f = faces.state, b = body.state;
+  const any = (s) => f === s || b === s;
+  if (any('denied')) { dot('dotCam', 'off', 'Camera blocked'); return; }
+  if (any('loading')) { dot('dotCam', 'warn', 'Waking up my eyes…'); return; }
+  if (f === 'on' || b === 'on') {
+    dot('dotCam', 'on', [f === 'on' && 'Seeing faces', b === 'on' && 'Tracking bodies'].filter(Boolean).join(' and ')); return;
+  }
+  if (any('error')) { dot('dotCam', 'off', 'Camera unavailable'); return; }
+  dot('dotCam', '', 'Camera off');
+}
+faces.addEventListener('state', camDot);
+body.addEventListener('state', (e) => {
+  camDot();
+  if (e.detail.state === 'error') toast("Body tracking couldn't start on this device.");
+});
+
+// ── touch-free display: body gestures ───────────────────────────────────────
+body.addEventListener('pointer', (e) => { air?.pointer(e.detail); if (e.detail.active) activity = now(); });
+body.addEventListener('pose', (e) => { air?.pose(e.detail); if (e.detail.people.length) activity = now(); });
+body.addEventListener('gesture', (e) => {
+  const { name, dir } = e.detail;
+  activity = now();
+  if (name === 'wave') {
+    air?.flash('wave', 'Wave');
+    if (!iHold()) claim('tap', freshSight() ? lastSight.person : null); // come here
+    else if (!moving) orb.hop();                                       // wave back
+  } else if (name === 'handsUp') {
+    air?.flash('handsUp', 'Listening');
+    if (sheetTab) closeSheet();
+    if (iHold()) { if (mouth.speaking || phase === 'thinking') orbTap(); else listenNow(); }
+    else claim('voice', freshSight() ? lastSight.person : null); // arrives listening
+  } else if (name === 'swipe') {
+    air?.swipe(dir);
+  }
 });
 
 // ── wiring ───────────────────────────────────────────────────────────────────
@@ -562,7 +599,19 @@ function startSenses() {
   faces.setPeople(alive());
   if (settings.mic) ears.start(settings.engine); else ears.stop();
   if (settings.cam) faces.start(); else faces.stop();
+  applyDisplay();
   requestWake();
+}
+
+// Touch-free display mode: body tracking drives an air cursor + gestures.
+function applyDisplay() {
+  air?.enable(!!settings.display && !!home);
+  if (settings.display && home) body.start(); else body.stop();
+  applyTyping();
+  if (!$('hint')) return;
+  $('hint').innerHTML = settings.display
+    ? 'Wave, or say <kbd>Hey Caden</kbd>'
+    : (/iPhone|iPad/.test(navigator.userAgent) && !isNative ? 'Tap me once, then say <kbd>Hey Caden</kbd>' : 'Say <kbd>Hey Caden</kbd>');
 }
 let wakeLock = null;
 async function requestWake() {
@@ -669,7 +718,7 @@ $('typebar').addEventListener('submit', (e) => {
   mouth.unlock();
   handleCommand(v);
 });
-function applyTyping() { $('typebar').hidden = !settings.typing; }
+function applyTyping() { $('typebar').hidden = !settings.typing || !!settings.display; }
 $('btnSettings').onclick = () => openSheet('home');
 
 // ── full screen (desktop) ───────────────────────────────────────────────────
@@ -777,6 +826,7 @@ function panel(tab) {
         ${toggleRow('followUp', 'Keep listening after I answer', 'For a few seconds, no wake word needed')}
         ${toggleRow('typing', 'Show a type box', 'Talk to me with the keyboard')}
         ${toggleRow('awake', 'Keep screen awake', 'Good for a wall tablet or kitchen display')}
+        ${toggleRow('display', 'Touch-free display', 'Navigate with your body from across the room: raise a hand to point, hold still to press, wave to call me. Needs a webcam.')}
       </div>
       <div class="card"><h3>What I remember</h3>
         ${memories.length ? memories.map((m) => `<div class="line"><span class="grow">${esc(m.fact)}<small>${esc(m.who || '')}</small></span><button class="btn small ghost" data-act="forget" data-id="${m.id}">Forget</button></div>`).join('') : '<div class="empty">Nothing yet. Tell me things worth remembering.</div>'}
@@ -828,6 +878,7 @@ function bindPanel(host) {
     saveSettings();
     if (el.dataset.set === 'typing') applyTyping();
     if (el.dataset.set === 'mic' || el.dataset.set === 'cam') startSenses();
+    if (el.dataset.set === 'display') { applyDisplay(); if (el.checked) toast('Raise a hand to point. Hold still to press.'); }
     if (el.dataset.set === 'awake') { if (el.checked) requestWake(); else wakeLock?.release().catch(() => {}); }
   }));
   const eng = host.querySelector('#sEngine');
@@ -935,7 +986,11 @@ function boot() {
   applyTyping();
   tickClock();
   stopEnroll();
-  if (/iPhone|iPad/.test(navigator.userAgent) && !isNative) $('hint').innerHTML = 'Tap me once, then say <kbd>Hey Caden</kbd>';
+  air = new AirNav();
+  if (/[?&]debug\b/.test(location.search)) window.__caden = { body, air, settings }; // test hook
+  // #display boots straight into touch-free mode (kiosk screens).
+  if (/(^|[#&])display\b/.test(location.hash)) { settings.display = true; saveSettings(); }
+  applyDisplay();
 
   const join = (location.hash.match(/join=([\w-]+)/) || [])[1];
   if (join && (!home || normCode(join) !== home.code)) {

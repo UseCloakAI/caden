@@ -316,3 +316,67 @@ button { cursor: pointer; }
 @media (max-height: 560px) { .clock { display: none; } }
 /* the camera keeps running off-screen; face-api reads frames from it */
 .cam-hidden { position: fixed; right: 0; bottom: 0; width: 2px; height: 2px; opacity: .01; pointer-events: none; }
+
+/* ── touch-free display mode (html.display) ───────────────────────────
+   Driven by body pose (js/body.js + js/airnav.js). Targets grow so a hand
+   from across the room can hit them; the type box goes (voice is the input). */
+html.display { --orb: min(50vmin, 36vh, 360px); }
+html.display .icon-btn { width: 60px; height: 60px; }
+html.display .icon-btn .ph { font-size: 28px; }
+html.display .btn { padding: 16px 26px; font-size: 18px; }
+html.display .chip { padding: 12px 18px; font-size: 16px; }
+html.display .tab { padding: 12px 18px; font-size: 16px; }
+html.display .room { padding: 12px 18px 12px 12px; font-size: 16px; }
+html.display .toggle { width: 64px; height: 38px; }
+html.display .toggle::after { width: 32px; height: 32px; }
+html.display .toggle:checked::after { translate: 26px 0; }
+html.display .typebar, html.display a[download], html.display .foot { display: none; }
+html.display .toast { bottom: calc(max(16px, env(safe-area-inset-bottom)) + 140px); }
+html.display .dock { bottom: 0; padding-bottom: calc(max(16px, env(safe-area-inset-bottom)) + 52px); }
+html.display .stage { padding-bottom: calc(max(16px, env(safe-area-inset-bottom)) + 140px); }
+
+.air-cursor {
+  position: fixed; left: 0; top: 0; z-index: 60; width: 64px; height: 64px; margin: -32px 0 0 -32px;
+  pointer-events: none; --p: 0; opacity: 0; scale: .4;
+  transition: opacity var(--t-std) var(--e-out), scale var(--t-std) var(--e-pop);
+}
+.air-cursor.show { opacity: 1; scale: 1; }
+.air-cursor .air-ring {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: conic-gradient(var(--coral) calc(var(--p) * 360deg), color-mix(in oklab, var(--card) 70%, transparent) 0);
+  -webkit-mask: radial-gradient(closest-side, transparent 72%, #000 74%); mask: radial-gradient(closest-side, transparent 72%, #000 74%);
+  box-shadow: var(--sh);
+}
+.air-cursor .air-dot { position: absolute; inset: 24px; border-radius: 50%; background: var(--coral); box-shadow: 0 0 0 4px color-mix(in oklab, var(--snow) 80%, transparent); transition: scale var(--t-quick) var(--e-out); }
+.air-cursor.dwell .air-dot { scale: 1.25; }
+.air-cursor.pop { animation: airPop 360ms var(--e-pop); }
+@keyframes airPop { 30% { scale: .78; } 65% { scale: 1.18; } }
+.air-cursor[data-scroll] .air-dot { scale: .7 1.3; }
+.air-cursor[data-scroll="up"] .air-dot { translate: 0 -6px; }
+.air-cursor[data-scroll="down"] .air-dot { translate: 0 6px; }
+.air-hover { outline: 3px solid var(--acc); outline-offset: 4px; translate: 0 -2px; transition: translate var(--t-std) var(--e-pop); }
+.air-pressed { animation: airPress 320ms var(--e-pop); }
+@keyframes airPress { 35% { scale: .92; } }
+html.air-pointing, html.air-pointing * { cursor: none; }
+
+.air-guide {
+  position: fixed; left: 50%; bottom: max(12px, env(safe-area-inset-bottom)); translate: -50% 0; z-index: 6;
+  display: flex; gap: 6px; flex-wrap: nowrap; max-width: calc(100vw - 220px); overflow: hidden; pointer-events: none;
+  transition: opacity var(--t-slow) var(--e-out), translate var(--t-slow) var(--e-out);
+}
+.air-guide span {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; padding: 6px 12px; border-radius: var(--pill);
+  font-size: 13px; font-weight: 800; color: var(--ink2); background: color-mix(in oklab, var(--card) 80%, transparent); backdrop-filter: blur(10px);
+}
+.air-guide .ph { font-size: 16px; color: var(--acc-ink); }
+.air-guide span.hit { animation: guideHit 700ms var(--e-pop); }
+@keyframes guideHit { 25% { scale: 1.12; background: color-mix(in oklab, var(--coral) 30%, var(--card)); color: var(--ink); } }
+html.air-pointing .air-guide { opacity: .35; }
+@media (max-width: 900px) { .air-guide span:nth-child(n+4) { display: none; } }
+
+.air-pip {
+  position: fixed; right: 16px; bottom: max(12px, env(safe-area-inset-bottom)); z-index: 6; width: 112px; height: 84px;
+  border-radius: var(--r-sm); background: color-mix(in oklab, var(--card) 75%, transparent); backdrop-filter: blur(10px);
+  box-shadow: var(--sh); pointer-events: none; transition: opacity var(--t-slow);
+}
+.air-pip.empty { opacity: .45; }
