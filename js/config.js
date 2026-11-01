@@ -29,4 +29,7 @@ export const TUNING = {
   keepTurns: 200,        // turns kept on each device
 };
 
+// Caden's voice: NVIDIA Magpie TTS Multilingual through the `voice` function.
+export const NV_VOICE = 'Magpie-Multilingual.EN-US.Aria';
+
 export const DEFAULT_WAKE = ['hey caden', 'caden', 'hey cloak'];

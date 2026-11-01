@@ -391,3 +391,10 @@ html.air-pointing .air-guide { opacity: .35; }
 @media (max-width: 1140px) { .air-guide span:nth-child(n+5) { display: none; } }
 @media (max-width: 940px) { .air-guide span:nth-child(n+4) { display: none; } }
 @media (max-width: 720px) { .air-guide span:nth-child(n+3) { display: none; } }
+
+/* voice location readout (Settings → Voice) */
+.locate-result { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.locate-result small { width: 100%; color: var(--ink3); font-weight: 800; font-size: 12px; }
+.locate-result span { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: var(--pill); background: var(--bg2); font-weight: 700; font-size: 13px; color: var(--ink2); }
+.locate-result span.win { background: color-mix(in oklab, var(--coral) 18%, var(--card)); color: var(--ink); }
+.locate-result b { color: var(--acc-ink); }

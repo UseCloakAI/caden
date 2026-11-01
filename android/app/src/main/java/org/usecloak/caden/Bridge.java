@@ -142,6 +142,7 @@ public class Bridge {
             lastLevel = now;
             float v = Math.max(0f, Math.min(1f, (db + 2f) / 12f));
             js("onSpeech", "level", String.valueOf(v));
+            js("onSpeech", "rms", String.valueOf(db)); // raw, for voice location (js/locate.js)
         }
 
         @Override public void onPartialResults(Bundle b) {

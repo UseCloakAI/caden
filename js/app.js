@@ -7,7 +7,7 @@
 // isn't mid-turn, and sends `handoff` with a bumped epoch. Saying "Hey Caden"
 // to any device summons it there right away. Highest epoch wins; ties go to
 // the lower device id, so two devices can never both keep it.
-import { TUNING, DEFAULT_WAKE } from './config.js';
+import { TUNING, DEFAULT_WAKE, SB_URL, SB_KEY, NV_VOICE } from './config.js';
 import { store, uid, device, newHomeCode, normCode } from './store.js';
 import { Mesh } from './mesh.js';
 import { Faces } from './faces.js';
@@ -16,6 +16,7 @@ import { think, homeContext, homeId, brainSync, brainForget, brainClear, stripRe
 import { Orb, E } from './orb.js';
 import { Hands } from './hands.js';
 import { AirNav } from './airnav.js';
+import { Meter, score, pickLoudest } from './locate.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -35,7 +36,7 @@ let home = store.get('home');              // { code, id }
 let people = store.get('people', []);      // [{id,name,color,d:[...],updated,deleted?}]
 let turns = [];
 let memories = [];
-const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false }, store.get('settings', {}));
+const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false, voiceEngine: 'nvidia', nvVoice: NV_VOICE, locate: true, voiceCal: null }, store.get('settings', {}));
 const saveSettings = () => store.set('settings', settings);
 
 const devices = new Map();                 // id -> {id,name,room,kind,last,holder,epoch,sees,phase}
@@ -57,6 +58,7 @@ const ears = new Ears();
 const mouth = new Mouth();
 const faces = new Faces($('cam'));
 const hands = new Hands();
+const meter = new Meter(); // wake-word loudness, for finding the nearest device
 let air = null; // AirNav, built at boot (needs the DOM)
 let orb, miniOrb, setupOrb;
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -272,21 +274,97 @@ function listenNow() {
 function onHeard({ text, final }) {
   if (mouth.speaking || (moving && !iHold())) return;
   const t = now();
+  if (calibrating && findWake(text, settings.wake)) { calibrate(); return; }
   if (mode === 'command' && t < modeUntil) {
     activity = t;
-    if (iHold() && text && text !== '…') $('capYou').innerHTML = `<span>${esc(text)}</span>`;
+    if (iHold() && !arb && text && text !== '…') $('capYou').innerHTML = `<span>${esc(text)}</span>`;
     if (!final) { modeUntil = Math.max(modeUntil, t + 4000); return; }
     const w = findWake(text, settings.wake);
     const cmd = (w ? w.rest : text).trim();
     if (normalize(cmd).length < 2) { modeUntil = t + 6000; return; }
+    if (arb) { arb.cmd = cmd; return; } // still deciding who's nearest
     handleCommand(cmd);
     return;
   }
   const w = findWake(text, settings.wake);
-  if (!w) return;
-  if (final && normalize(w.rest).length > 1) { handleCommand(w.rest); return; }
+  if (!w || now() < quietUntil) return;
+  if (calibrating) { calibrate(); return; }
+  wake(final && normalize(w.rest).length > 1 ? w.rest : null);
+}
+
+// ── voice location: the loudest "Hey Caden" wins ─────────────────────────────
+// Each device that hears the wake word scores how loud it was against its own
+// close-up calibration and shares the score; after ARB_MS the loudest device
+// takes Caden (and the command), the rest stand down. Alone, or with location
+// off, a device acts right away like before.
+const ARB_MS = 700;
+let arb = null;            // {cmd, scores: Map(id → score)}
+const heardEarly = [];     // scores that arrived before our own recognizer caught up
+let quietUntil = 0;        // ignore the tail of an utterance we lost
+let lastLocate = null;     // {win, scores, at} for Settings
+let calibrating = null;
+
+function wake(cmd) {
+  if (arb) { if (cmd) arb.cmd = cmd; return; }
+  const peak = settings.locate && meter.ok ? meter.peak() : null;
+  const mine = score(peak, settings.voiceCal, meter.scale);
+  if (mine == null || liveDevices().length < 2) { actOnWake(cmd); return; }
+  arb = { cmd, scores: new Map([[me.id, mine]]) };
+  for (const h of heardEarly) if (now() - h.at < 2000) arb.scores.set(h.from, h.score);
+  mode = 'command'; modeUntil = now() + 7000; // keep collecting the command meanwhile
+  mesh.send('heard', { score: mine });
+  setTimeout(decideWake, ARB_MS);
+}
+
+function actOnWake(cmd) {
+  if (cmd) { handleCommand(cmd); return; }
   listenNow();
   if (!iHold()) claim('voice', freshSight() ? lastSight.person : null);
+}
+
+function decideWake() {
+  const a = arb;
+  arb = null;
+  const win = pickLoudest(a.scores, holder.id);
+  lastLocate = { win, scores: Object.fromEntries(a.scores), at: Date.now() };
+  if (win === me.id) actOnWake(a.cmd);
+  else {
+    mode = 'wait';
+    quietUntil = now() + 2500;
+    if (iHold() && phase === 'listening') setPhase('idle');
+  }
+  if (sheetTab === 'voice') renderSheet();
+}
+
+function onRemoteHeard(from, sc) {
+  if (typeof sc !== 'number') return;
+  if (arb) { arb.scores.set(from, sc); return; }
+  heardEarly.push({ from, score: sc, at: now() });
+  while (heardEarly.length && now() - heardEarly[0].at > 3000) heardEarly.shift();
+}
+
+// Calibrate: stand next to this device and say "Hey Caden".
+function startCalibration() {
+  if (!meter.ok) { toast('Turn on "Listen for my name" first.'); return; }
+  calibrating = { until: now() + 10000 };
+  renderSheet();
+  setTimeout(() => {
+    if (calibrating && now() >= calibrating.until) { calibrating = null; toast('I didn\'t hear "Hey Caden". Try again.'); renderSheet(); }
+  }, 10100);
+}
+function calibrate() {
+  // Let the phrase finish, then take its peak.
+  const c = calibrating;
+  calibrating = null;
+  setTimeout(() => {
+    const p = meter.peak();
+    if (p == null || !c) { toast('Couldn\'t measure that. Try again.'); renderSheet(); return; }
+    settings.voiceCal = { db: Math.round(p * 10) / 10, scale: meter.scale, at: Date.now() };
+    saveSettings();
+    orb?.hop();
+    toast('Got it. This is how you sound up close.');
+    renderSheet();
+  }, 400);
 }
 
 function whoNow() {
@@ -584,8 +662,33 @@ hands.addEventListener('gesture', (e) => {
 // ── wiring ───────────────────────────────────────────────────────────────────
 ears.addEventListener('heard', (e) => onHeard(e.detail));
 ears.addEventListener('level', (e) => orb?.level(e.detail));
+ears.addEventListener('rms', (e) => meter.push(e.detail));
 faces.addEventListener('sight', (e) => onSight(e.detail));
 let talkT = null;
+// Caden's voice: NVIDIA Magpie through the Caden `voice` function, else the device's.
+const VOICE_URL = `${SB_URL}/functions/v1/voice`;
+const VOICE_HEADERS = { 'Content-Type': 'application/json', apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` };
+let nvVoices = null; // [{name, lang}] from NVIDIA, loaded when Settings → Voice opens
+const langOf = (name) => { const m = /\.([A-Z]{2})-([A-Z]{2})\./.exec(name || ''); return m ? `${m[1].toLowerCase()}-${m[2]}` : 'en-US'; };
+function applyVoice() {
+  if (settings.voiceEngine === 'nvidia' && home) {
+    const v = settings.nvVoice || NV_VOICE;
+    mouth.useNvidia({ url: VOICE_URL, headers: VOICE_HEADERS, voice: v, lang: nvVoices?.find((x) => x.name === v)?.lang || langOf(v), home: home.id });
+  } else mouth.useNvidia(null);
+}
+async function loadNvVoices() {
+  if (nvVoices) return nvVoices;
+  const r = await fetch(VOICE_URL, { method: 'POST', headers: VOICE_HEADERS, body: JSON.stringify({ action: 'voices' }) });
+  if (!r.ok) throw new Error(`voices ${r.status}`);
+  nvVoices = (await r.json()).voices || [];
+  return nvVoices;
+}
+let warnedVoice = false;
+mouth.addEventListener('fallback', () => {
+  if (warnedVoice) return;
+  warnedVoice = true;
+  toast("NVIDIA voice isn't reachable. Using this device's voice for now.");
+});
 mouth.addEventListener('start', () => {
   if (iHold()) setPhase('speaking');
   clearInterval(talkT);
@@ -622,6 +725,7 @@ mesh.addEventListener('msg', (e) => {
     case 'turn': mergeTurn(data.turn); break;
     case 'turns': for (const t of data.list || []) mergeTurn(t); break;
     case 'claim': onClaim(from, data); break;
+    case 'heard': onRemoteHeard(from, data.score); break;
     case 'handoff': onHandoff(from, data); break;
   }
 });
@@ -630,6 +734,8 @@ mesh.addEventListener('msg', (e) => {
 function startSenses() {
   faces.setPeople(alive());
   if (settings.mic) ears.start(settings.engine); else ears.stop();
+  if (settings.mic && settings.locate) { if (ears.engine === 'native') meter.useFeed(); else meter.start(); }
+  else meter.stop();
   if (settings.cam) faces.start(); else faces.stop();
   applyDisplay();
   requestWake();
@@ -657,6 +763,7 @@ async function enterHome(code) {
   code = normCode(code);
   home = { code, id: await homeId(code) };
   store.set('home', home);
+  applyVoice(); // the voice function wants the home id
   loadTurns();
   joinedAt = now();
   await mesh.join(code);
@@ -891,8 +998,28 @@ function panel(tab) {
           ${engines.map((e) => `<option value="${e}" ${settings.engine === e ? 'selected' : ''}>${{ native: 'Android speech', browser: 'Browser speech', whisper: 'Cloak transcribe' }[e]}</option>`).join('')}
         </select></div>
       </div>
+      <div class="card"><h3>Find me by voice</h3>
+        ${toggleRow('locate', 'Go to the nearest screen', 'When several screens hear "Hey Caden", the one that heard you loudest answers.')}
+        <div class="line"><span class="grow">${settings.voiceCal
+          ? `Calibrated ${new Date(settings.voiceCal.at).toLocaleDateString([], { month: 'short', day: 'numeric' })}<small>Your up-close level here: ${settings.voiceCal.db} dB</small>`
+          : 'Not calibrated<small>Stand right next to this screen, tap Calibrate, then say "Hey Caden".</small>'}</span>
+          <button class="btn small ${calibrating ? 'primary' : ''}" data-act="calibrate">${calibrating ? '<i class="ph ph-microphone" aria-hidden="true"></i>Say "Hey Caden"' : 'Calibrate'}</button></div>
+        ${lastLocate ? `<div class="locate-result"><small>Last "Hey Caden"</small>${Object.entries(lastLocate.scores).sort((a, b) => b[1] - a[1]).map(([id, sc]) => {
+          const d = id === me.id ? me : devices.get(id);
+          return `<span class="${id === lastLocate.win ? 'win' : ''}">${roomIcon(d?.room)}${esc(d?.room || d?.name || 'Device')} <b>${sc >= 0 ? '+' : ''}${sc.toFixed(1)} dB</b></span>`;
+        }).join('')}</div>` : ''}
+      </div>
       <div class="card"><h3>My voice</h3>
-        ${vs.length ? `<div class="field"><label for="sVoice">Voice</label><select class="input" id="sVoice"><option value="">Friendliest available</option>${vs.map((v) => `<option ${settings.voice === v.name ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></div>` : '<p class="fine" style="margin:0">Using this device\'s built-in voice.</p>'}
+        <div class="chips" role="radiogroup" aria-label="Which voice">
+          <button class="chip" type="button" role="radio" data-act="engine" data-v="nvidia" aria-pressed="${settings.voiceEngine === 'nvidia'}" aria-checked="${settings.voiceEngine === 'nvidia'}"><i class="ph ph-waveform" aria-hidden="true"></i>NVIDIA Magpie</button>
+          <button class="chip" type="button" role="radio" data-act="engine" data-v="device" aria-pressed="${settings.voiceEngine !== 'nvidia'}" aria-checked="${settings.voiceEngine !== 'nvidia'}"><i class="ph ph-device-mobile-speaker" aria-hidden="true"></i>This device</button>
+        </div>
+        ${settings.voiceEngine === 'nvidia'
+          ? (nvVoices
+            ? `<div class="field"><label for="sNvVoice">Voice</label><select class="input" id="sNvVoice">${nvVoices.map((v) => `<option value="${esc(v.name)}" ${settings.nvVoice === v.name ? 'selected' : ''}>${esc(v.name.replace(/^Magpie-Multilingual\./, '').replace(/\./g, ' '))}</option>`).join('')}</select></div>`
+            : '<p class="fine" style="margin:0" id="nvVoiceNote">Loading NVIDIA voices…</p>')
+          : (vs.length ? `<div class="field"><label for="sVoice">Voice</label><select class="input" id="sVoice"><option value="">Friendliest available</option>${vs.map((v) => `<option ${settings.voice === v.name ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></div>` : '<p class="fine" style="margin:0">Using this device\'s built-in voice.</p>')}
+        <p class="fine" style="margin:0">${settings.voiceEngine === 'nvidia' ? 'One natural voice on every screen. Needs the internet; falls back to the device voice if NVIDIA is busy.' : 'Works offline. Sounds different on each device.'}</p>
         <div class="field"><label for="sRate">Speed</label><input type="range" id="sRate" min="0.7" max="1.4" step="0.05" value="${settings.rate}"></div>
         <button class="btn small" data-act="testVoice">Test my voice</button>
       </div>`;
@@ -909,12 +1036,16 @@ function bindPanel(host) {
     settings[el.dataset.set] = el.checked;
     saveSettings();
     if (el.dataset.set === 'typing') applyTyping();
-    if (el.dataset.set === 'mic' || el.dataset.set === 'cam') startSenses();
+    if (el.dataset.set === 'mic' || el.dataset.set === 'cam' || el.dataset.set === 'locate') startSenses();
     if (el.dataset.set === 'display') { applyDisplay(); if (el.checked) toast('Point with your hand. Pinch to press.'); }
     if (el.dataset.set === 'awake') { if (el.checked) requestWake(); else wakeLock?.release().catch(() => {}); }
   }));
   const eng = host.querySelector('#sEngine');
   if (eng) eng.onchange = () => { settings.engine = eng.value; saveSettings(); if (settings.mic) { ears.stop(); ears.start(settings.engine); } };
+  const nv = host.querySelector('#sNvVoice');
+  if (nv) nv.onchange = () => { settings.nvVoice = nv.value; saveSettings(); applyVoice(); };
+  if (host.querySelector('#nvVoiceNote')) loadNvVoices().then(() => { if (sheetTab === 'voice') renderSheet(); })
+    .catch(() => { const n = $('nvVoiceNote'); if (n) n.textContent = "Couldn't load NVIDIA voices right now. Using the default voice."; });
   const v = host.querySelector('#sVoice');
   if (v) v.onchange = () => { settings.voice = v.value; mouth.voiceName = v.value; saveSettings(); };
   const rate = host.querySelector('#sRate');
@@ -937,6 +1068,8 @@ async function act(a, el) {
     settings.wake = w.length ? w : DEFAULT_WAKE;
     saveSettings(); renderSheet(); toast('Wake words saved');
   }
+  if (a === 'calibrate') { if (calibrating) { calibrating = null; renderSheet(); } else startCalibration(); }
+  if (a === 'engine') { settings.voiceEngine = el.dataset.v; saveSettings(); applyVoice(); warnedVoice = false; renderSheet(); }
   if (a === 'testVoice') { mouth.unlock(); mouth.stop(); say(`Hi! I'm Caden. I'm in the ${me.room || 'room'} with you.`); }
   if (a === 'clearTurns' && confirm('Clear the conversation history on every device?')) {
     turns = []; saveTurns(); renderSheet();
@@ -1015,11 +1148,12 @@ function boot() {
   document.addEventListener('pointerdown', () => mouth.unlock(), { once: true });
   mouth.rate = settings.rate;
   mouth.voiceName = settings.voice;
+  applyVoice();
   applyTyping();
   tickClock();
   stopEnroll();
   air = new AirNav();
-  if (/[?&]debug\b/.test(location.search)) window.__caden = { hands, air, settings, mesh, holder: () => holder }; // test hook
+  if (/[?&]debug\b/.test(location.search)) window.__caden = { hands, air, settings, mesh, meter, onHeard, holder: () => holder, lastLocate: () => lastLocate }; // test hook
   // #display boots straight into touch-free mode (kiosk screens).
   if (/(^|[#&])display\b/.test(location.hash)) { settings.display = true; saveSettings(); }
   applyDisplay();
