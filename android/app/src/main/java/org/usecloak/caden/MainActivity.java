@@ -49,6 +49,8 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        showOverLock();
+        CadenService.channels(this);
 
         web = new WebView(this);
         web.setBackgroundColor(Color.parseColor("#FFF7EE"));
@@ -103,6 +105,24 @@ public class MainActivity extends Activity {
         web.loadUrl(ORIGIN + "index.html" + (deep != null ? "#" + deep : ""));
     }
 
+    // Caden can arrive while this phone is locked: show over the lock screen and
+    // turn the screen on (manifest flags too, for API 27+).
+    @SuppressWarnings("deprecation")
+    private void showOverLock() {
+        if (android.os.Build.VERSION.SDK_INT >= 27) { setShowWhenLocked(true); setTurnScreenOn(true); }
+        else getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
+    }
+
+    @Override
+    protected void onNewIntent(android.content.Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (intent != null && intent.getBooleanExtra("caden.wake", false)) {
+            CadenService.arrived(this);
+            web.evaluateJavascript("window.__cadenNative&&window.__cadenNative.onWake&&window.__cadenNative.onWake()", null);
+        }
+    }
+
     private boolean hasPerms() {
         return checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
             && checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
@@ -110,7 +130,10 @@ public class MainActivity extends Activity {
 
     private void askPerms() {
         List<String> need = new ArrayList<>();
-        for (String p : new String[]{Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO}) {
+        String[] want = android.os.Build.VERSION.SDK_INT >= 33
+            ? new String[]{Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS}
+            : new String[]{Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO};
+        for (String p : want) {
             if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) need.add(p);
         }
         if (!need.isEmpty()) requestPermissions(need.toArray(new String[0]), REQ);
@@ -171,6 +194,7 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         web.onResume();
+        CadenService.arrived(this);
         ticker.removeCallbacks(recheck);
         ticker.postDelayed(recheck, 4000); // check soon after coming back, then every 30 min
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
@@ -179,7 +203,9 @@ public class MainActivity extends Activity {
     @Override
     protected void onPause() {
         bridge.quiet();
-        web.onPause();
+        // While Caden can be handed here, keep the page running in the background
+        // (CadenService holds the process); otherwise pause it as usual.
+        if (!bridge.keepingAlive()) web.onPause();
         super.onPause();
     }
 
