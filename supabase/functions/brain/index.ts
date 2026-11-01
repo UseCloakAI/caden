@@ -2,7 +2,7 @@
 //   sync    → { turns, memories }            recent history for a device that just joined
 //   turn    → SSE stream (Cloak's format)    saves the turn, builds the prompt from the
 //                                            home's history + memories, streams the reply
-//                                            from Cloak's `home` tier (NVIDIA key pool)
+//                                            from Cloak's `kairos` tier (NVIDIA Nemotron first)
 //   forget  → { ok }                         drop one memory
 //   clear   → { ok }                         drop the home's turns
 // Tables are service-role only (RLS on, no policies).
@@ -13,13 +13,11 @@ const HISTORY = 24;
 const MAX_MEMORIES = 60;
 const TURNS_PER_MINUTE = 20;
 
-// Until the Cloak worker with the `home` tier is deployed, ride Kairos (NVIDIA
-// Nemotron first) with a short spoken-style note. Checked once per isolate.
-const SPOKEN_NOTE = "## HOME MODE\nYou are Cloak running as Caden, a voice agent on the screens around a home. Replies are read aloud: one to three short sentences, plain spoken text, no markdown, lists, emoji or URLs. Lines start with the speaker's name in brackets like [Maya]; never repeat the tag. To save a lasting fact someone tells you, add a final line `REMEMBER: <fact, naming the person it is about>`; it is never spoken.";
-let tier: Promise<string> | null = null;
-const homeTier = () => tier ??= fetch("https://api.usecloak.org/")
-  .then((r) => r.json()).then((j) => (j.models || []).includes("home") ? "home" : "kairos")
-  .catch(() => "kairos");
+// Caden runs on Cloak's existing `kairos` tier (NVIDIA Nemotron first) with
+// this playbook added to the system prompt. Nothing Caden-specific lives in
+// the Cloak repo. Keep in sync with HOME_NOTE in js/config.js.
+const MODEL = "kairos";
+const HOME_NOTE = "## HOME MODE: YOU ARE SPOKEN OUT LOUD\nThis conversation is Cloak running as Caden, the voice agent that lives on the screens and phones around a home. Every word you write is read aloud by text-to-speech, then shown as a caption.\n- Talk like a calm, friendly person in the room. Short: one to three sentences unless the person asks for more detail, a list, or a story.\n- Plain spoken text only. No markdown, no bullets, no headings, no emoji, no code blocks, no URLs, no tables. Write numbers, times and units the way you would say them.\n- Lines in the conversation start with the speaker's name in brackets, like [Maya]. That is who is talking right now, recognized by face or voice; [Someone] means nobody was recognized. Use names naturally, not every turn. Never repeat the bracket tag in your reply.\n- Several people share this home and take turns. Keep track of who asked what; answer the current speaker.\n- The HOME CONTEXT note says which room and device you are on, and the local time. You move between devices as people walk around. You can mention it (\"I'm in the kitchen now\") but don't narrate it.\n- You can't control lights, locks or other smart-home hardware yet. Say so plainly if asked, and offer what you can do: answer, remind, time, math, ideas, explain.\n- If you didn't catch something, ask them to say it again in a few words.\n- Caden's brain keeps the home's memories; they appear under THINGS YOU REMEMBER ABOUT THIS HOME. When someone tells you a lasting fact worth keeping (a name, a preference, a birthday, a routine, a plan), add one final line on its own: REMEMBER: <the fact, saying who it is about>. That line is saved, never spoken. Use it rarely, only for durable facts.";
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -78,9 +76,8 @@ async function turn(home: string, body: Record<string, unknown>) {
   messages.push({ role: "user", content: `[${row.who}] ${text}` });
 
   const facts = (mems.data || []).map((m) => `- ${m.fact}${m.who ? ` (from ${m.who})` : ""}`);
-  const model = await homeTier();
   const system = [
-    model === "home" ? "" : SPOKEN_NOTE,
+    HOME_NOTE,
     clip(body.context, 1500),
     facts.length ? `## THINGS YOU REMEMBER ABOUT THIS HOME\n${facts.join("\n")}` : "",
   ].filter(Boolean).join("\n\n");
@@ -88,7 +85,7 @@ async function turn(home: string, body: Record<string, unknown>) {
   const up = await fetch(CLOAK, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model, stream: true, messages, system, max_tokens: 400, effort: "low" }),
+    body: JSON.stringify({ model: MODEL, stream: true, messages, system, max_tokens: 400, effort: "low" }),
   });
   if (!up.ok || !up.body) {
     const err = await up.text().catch(() => "");

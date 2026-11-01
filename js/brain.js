@@ -1,9 +1,9 @@
 // Brain — the Caden Supabase project's `brain` edge function. It keeps each
 // home's turns and memories, builds the prompt, and streams the reply from
-// Cloak's `home` tier (NVIDIA key pool). If the brain is unreachable, Caden
+// Cloak's `kairos` tier (NVIDIA Nemotron first). If the brain is unreachable, Caden
 // talks to Cloak directly with the turns this device has.
 // Sentences are handed out as they complete so Caden starts talking early.
-import { API, MODEL, TUNING, SB_URL, SB_KEY } from './config.js';
+import { API, MODEL, HOME_NOTE, TUNING, SB_URL, SB_KEY } from './config.js';
 
 const BRAIN = `${SB_URL}/functions/v1/brain`;
 const brainHeaders = { 'Content-Type': 'application/json', apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` };
@@ -59,7 +59,7 @@ export async function think({ home, turn, turns, system, signal, onSentence, onD
     res = await fetch(`${API}/v1/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: MODEL, stream: true, messages: toMessages(turns), system, max_tokens: 400, effort: 'low' }),
+      body: JSON.stringify({ model: MODEL, stream: true, messages: toMessages(turns), system: `${HOME_NOTE}\n\n${system}`, max_tokens: 400, effort: 'low' }),
       signal,
     });
   }

@@ -8,8 +8,8 @@ Runs as a web app (GitHub Pages) and as an Android APK. Powered by [Cloak](https
 
 | Piece | Where | What |
 |---|---|---|
-| Brain | Caden Supabase project → edge function `brain` | Keeps each home's turns + memories, builds the prompt, streams the reply from Cloak's `home` tier |
-| Model | `api.usecloak.org` `/v1/chat`, `model: "home"` | Cloak's NVIDIA key pool only (Nemotron → GLM-5.3-Flash → Laguna XS) + the spoken-reply `HOME_PLAYBOOK` |
+| Brain | Caden Supabase project → edge function `brain` | Keeps each home's turns + memories, builds the prompt (with Caden's spoken-reply playbook), streams the reply from Cloak |
+| Model | `api.usecloak.org` `/v1/chat`, `model: "kairos"` | Cloak's existing tier, NVIDIA Nemotron first (Cloak falls back to Groq/Gemini if NVIDIA is down). Nothing Caden-specific lives in the Cloak repo |
 | Mesh | WebRTC data channels over the LAN, Supabase Realtime as relay | Devices talk directly over the home network (~1 ms); the relay handles discovery, link setup and fallback. Every message AES-GCM encrypted with the home code |
 | Eyes | `js/faces.js` (face-api / tfjs, on device) | Detects + recognizes faces; frames never leave the device, only 128-number descriptors (encrypted) |
 | Ears | `js/voice.js` | Wake word + commands: Android SpeechRecognizer → Web Speech API → Cloak `/v1/transcribe` fallback |
@@ -106,7 +106,7 @@ The APK serves the bundled web app from `https://caden.app/` (intercepted, offli
 ## Backend
 
 - Supabase project **Caden** (`wiimiqqmdmfikuqgqhtm`): tables `home_turns`, `home_memories` (RLS on, service-role only), edge function `brain` (`supabase/functions/brain`). Homes are keyed by `sha256("caden-db:" + homeCode)` — the server never sees the code.
-- The `home` tier lives in the Cloak worker (`UseCloakAI/cloak`, `api-worker/src/index.js` + `prompts.js` `HOME_PLAYBOOK`). Until that worker is deployed, the brain falls back to Cloak's `kairos` tier (also NVIDIA-first) with a short spoken-style note.
+- Caden uses Cloak's existing `kairos` tier as-is. The spoken-reply playbook (`HOME_NOTE`) lives in Caden: in the brain function and, for the direct fallback, in `js/config.js`. No changes to the Cloak repo are needed.
 
 ## Privacy
 
