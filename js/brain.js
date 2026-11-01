@@ -59,10 +59,10 @@ export function toMessages(turns) {
 // Streams a reply. onSentence(text) per finished sentence, onDelta(full) per token.
 // `home` + `turn` go to the brain (it has the history); `turns` is the local
 // fallback history if the brain can't be reached.
-export async function think({ home, turn, turns, system, where, images, signal, onSentence, onDelta }) {
+export async function think({ home, turn, turns, system, where, images, agent, signal, onSentence, onDelta }) {
   let res = null;
   try {
-    res = await fetch(BRAIN, { method: 'POST', headers: brainHeaders, body: JSON.stringify({ action: 'turn', home, turn, context: system, images: images || undefined, where: where ? { lat: where.lat, lon: where.lon, place: where.place, units: where.units } : null }), signal });
+    res = await fetch(BRAIN, { method: 'POST', headers: brainHeaders, body: JSON.stringify({ action: 'turn', home, turn, context: system, images: images || undefined, agent: agent || undefined, where: where ? { lat: where.lat, lon: where.lon, place: where.place, units: where.units } : null }), signal });
     if (!res.ok || !res.body) res = null;
   } catch (e) { if (signal?.aborted) throw e; res = null; }
   if (!res) {

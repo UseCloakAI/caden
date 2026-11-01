@@ -442,7 +442,7 @@ function handleCommand(text) {
 const STOP = /^(stop|cancel|never ?mind|be quiet|shh+|quiet|that's all|thanks that's all|nothing)\W*$/i;
 
 // ── a turn ───────────────────────────────────────────────────────────────────
-async function runTurn(text, who, step = false, images = null) {
+async function runTurn(text, who, step = false, images = null, agent = null) {
   const overheard = !step && followUpOpen;
   followUpOpen = false;
   if (!iHold()) return;
@@ -492,7 +492,7 @@ async function runTurn(text, who, step = false, images = null) {
   });
   try {
     const full = await think({
-      home: home.id, turn, turns, system: context, where: place, images, signal: ctrl.signal,
+      home: home.id, turn, turns, system: context, where: place, images, agent, signal: ctrl.signal,
       onSentence: (raw) => {
         const s = speakable(raw);
         if (ctrl.signal.aborted || !s || HIDDEN_LINE.test(s)) return;
@@ -578,7 +578,7 @@ const roomsOf = (ids) => ids.map((id) => devLabel(liveDevices().find((d) => d.id
 // Run the DO: lines of a reply. Returns what happened, for the next agent step.
 function runActions(full, said = '') {
   const notes = [];
-  let more = false, announcedHere = false, ignored = false, look = false;
+  let more = false, announcedHere = false, ignored = false, look = false, agent = '';
   const lines = String(full || '').split('\n');
   // "tell <room>" already takes Caden there; drop a "go" to the same room
   const told = new Set(lines.map((l) => l.match(/^\s*DO:\s*tell\s+([^|]+)\|/i)?.[1]).filter(Boolean).map((r) => findRoom(r.trim())?.id).filter(Boolean));
@@ -592,6 +592,7 @@ function runActions(full, said = '') {
     const kind = verb === 'bright' || verb === 'undim' ? 'dim' : verb;
     if (ASKED[kind] && !ASKED[kind].test(said)) continue;
     if (verb === 'continue') { more = true; continue; }
+    if (verb === 'agent') { agent = raw.slice(0, 1000); continue; } // multi-step work: the planning agent takes it
     if (verb === 'look') { look = true; continue; } // Caden wants to see: one still, then its next step
     if (verb === 'ignore') { endConversation = true; ignored = true; continue; } // not meant for Caden: stay silent
     if (verb === 'done') { endConversation = true; continue; }                    // conversation over: stop listening
@@ -636,13 +637,22 @@ function runActions(full, said = '') {
     }
   }
   if (!mouth.speaking) flushLater();
-  return { notes, more, announcedHere, ignored, look };
+  return { notes, more, announcedHere, ignored, look, agent };
 }
 
 // Agent steps: if the model asked to continue (DO: continue), or one of its
 // actions didn't work, it gets a [System] turn with what happened and keeps
 // going, up to MAX_STEPS in a row.
 function nextStep(result) {
+  if (result.agent && agentSteps < MAX_STEPS) {
+    agentSteps++;
+    const go = () => {
+      notice({ key: 'agent', icon: 'list-checks', title: 'Working on it', body: 'Planning this out. It can take a minute.', ms: 6000 });
+      runTurn(`Results: your planning agent finished "${result.agent}". Its report is in AGENT REPORT. Tell them the result briefly, out loud, and add DO lines for any actions it suggests that they asked for.`, { name: 'System', id: null }, true, null, result.agent);
+    };
+    if (mouth.speaking) later(go); else setTimeout(go, 200);
+    return;
+  }
   if (result.look && agentSteps < MAX_STEPS) {
     agentSteps++;
     const go = async () => {
