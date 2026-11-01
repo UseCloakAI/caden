@@ -250,10 +250,19 @@ export const sfx = {
       comp.connect(this.ctx.destination);
       this.master = this.ctx.createGain();
       this.master.connect(comp);
+      this.alertBus = this.ctx.createGain(); // timers, alarms, announcements: their own volume
+      this.alertBus.connect(comp);
       this.setVolume(this.volume);
+      this.setAlertVolume(this.alertVolume);
       this.warm();
     }
     if (this.ctx.state !== 'running') this.ctx.resume().catch(() => {});
+  },
+
+  alertVolume: 0.85,
+  setAlertVolume(v) {
+    this.alertVolume = Math.max(0, Math.min(1, v));
+    if (this.alertBus) this.alertBus.gain.setTargetAtTime(Math.pow(this.alertVolume, 1.5) * 1.2, this.ctx.currentTime, 0.02);
   },
 
   setVolume(v) {
@@ -285,7 +294,7 @@ export const sfx = {
 
   // dir: for 'tick' (down a step when turning back), value: 0..1 for 'value' (snapped to the scale)
   // force: play even with sound effects turned off (ringtones, announcements)
-  async play(name, { pan = 0, gain = 1, delay = 0, dir = 1, value = null, force = false } = {}) {
+  async play(name, { pan = 0, gain = 1, delay = 0, dir = 1, value = null, force = false, alert = false } = {}) {
     if ((!this.enabled && !force) || !this.ctx || this.ctx.state === 'closed') return;
     const real = name in ALIAS ? ALIAS[name] : name;
     if (!real) return;
@@ -305,7 +314,7 @@ export const sfx = {
     src.playbackRate.value = Math.pow(2, semis / 12) * (1 + (Math.random() - 0.5) * jitter);
     gn.gain.value = g;
     p.pan.value = Math.max(-1, Math.min(1, pan));
-    src.connect(gn).connect(p).connect(this.master);
+    src.connect(gn).connect(p).connect(alert ? this.alertBus : this.master);
     src.start(this.ctx.currentTime + delay);
   },
 };
