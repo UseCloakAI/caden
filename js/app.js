@@ -13,7 +13,7 @@ import { store, uid, device, newHomeCode, normCode } from './store.js';
 import { Mesh } from './mesh.js';
 import { Faces } from './faces.js';
 import { Ears, Mouth, findWake, normalize, hearingEngines } from './voice.js';
-import { think, homeContext, homeId, brainSync, brainForget, brainClear, stripRemember } from './brain.js';
+import { think, homeContext, homeId, brainSync, brainForget, brainClear, stripRemember, splitActions, speakable } from './brain.js';
 import { E } from './orb.js';
 import { Wave, quietOrb } from './wave.js';
 import { Wheel } from './wheel.js';
@@ -42,7 +42,7 @@ let home = store.get('home');              // { code, id }
 let people = store.get('people', []);      // [{id,name,color,d:[...],updated,deleted?}]
 let turns = [];
 let memories = [];
-const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false, voiceEngine: 'nvidia', nvVoice: NV_VOICE, locate: true, voiceCal: null, sfx: true, sfxVol: 0.6, volume: 100, dim: 0, wakeHere: true, quality: 'auto' }, store.get('settings', {}));
+const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false, voiceEngine: 'nvidia', nvVoice: NV_VOICE, locate: true, voiceCal: null, sfx: true, sfxVol: 0.6, volume: 100, dim: 0, wakeHere: true, quality: 'auto', alertVol: 0.85 }, store.get('settings', {}));
 const saveSettings = () => store.set('settings', settings);
 
 const devices = new Map();                 // id -> {id,name,room,kind,last,holder,epoch,sees,phase}
@@ -250,7 +250,7 @@ async function arriveHere(from, reason, person, line = null) {
   if (line) {
     // sent here to tell the room something ("go to the kitchen and tell them...")
     pending = null;
-    sfx.play('announce', { force: true });
+    sfx.play('announce', { force: true, alert: true });
     setTimeout(() => { showSaid(line); say(line); }, 900);
   } else if (pending && now() - pending.at < 20000) {
     const job = pending; pending = null;
@@ -440,9 +440,13 @@ async function runTurn(text, who, step = false) {
   streaming = false;
   mouth.stop();
   if (!step) agentSteps = 0;
-  if (ringing.size && /\b(stop|dismiss|turn (it|that) off|enough|okay|ok|snooze|quiet)\b/i.test(text)) {
+  // "Hey Caden, dismiss / stop / snooze": whichever timers and alarms are
+  // going off anywhere in the home, from whichever screen heard it
+  const due = [...clocks.values()].filter((c) => c.at <= now() + 1000);
+  if (due.length && /\b(stop|dismiss|turn (it|that|them) off|enough|okay|ok|snooze|quiet|silence|shut (it|that) off)\b/i.test(text)) {
     const snooze = /\bsnooze\b/i.test(text);
-    for (const id of [...ringing.keys()]) stopClock(id, snooze);
+    for (const c of due) stopClock(c.id, snooze);
+    sfx.play('cancel');
     setPhase('idle'); return;
   }
   if (STOP.test(normalize(text))) { mode = 'wait'; setPhase('idle'); $('capSaid').textContent = ''; return; }
@@ -475,8 +479,9 @@ async function runTurn(text, who, step = false) {
   try {
     const full = await think({
       home: home.id, turn, turns, system: context, where: place, signal: ctrl.signal,
-      onSentence: (s) => {
-        if (ctrl.signal.aborted || HIDDEN_LINE.test(s)) return;
+      onSentence: (raw) => {
+        const s = speakable(raw);
+        if (ctrl.signal.aborted || !s || HIDDEN_LINE.test(s)) return;
         if (holdSpeech) { held.push(s); return; }
         appendSaid(s);
         say(s);
@@ -484,7 +489,7 @@ async function runTurn(text, who, step = false) {
     });
     turn.reply = stripRemember(full) || '…';
     const recent = [text, ...turns.slice(-3).filter((t) => t.whoId || t.who !== 'System').map((t) => t.text)].join(' ');
-    var stepResult = runActions(full, recent);
+    var stepResult = runActions(splitActions(full), recent);
     if (holdSpeech) {
       if (stepResult.announcedHere) setPhase('idle');
       else for (const h of held) { appendSaid(h); say(h); }
@@ -654,6 +659,7 @@ function setVolume(v) {
 function applyVolume() {
   mouth.volume = settings.volume / 100;
   sfx.setVolume(settings.sfxVol * (settings.volume / 100));
+  sfx.setAlertVolume(settings.alertVol);
 }
 
 // ── resting: after a quiet minute the clock takes the middle of the screen ──
@@ -679,12 +685,12 @@ function announce(text, ids) {
 function hearAnnouncement(text, from) {
   if (document.hidden) { try { NativeApp()?.wake?.(); } catch { /* */ } }
   sfx.unlock();
-  sfx.play('announce', { force: true });
+  sfx.play('announce', { force: true, alert: true });
   notice({ icon: 'megaphone-simple', title: `Announcement${from && from !== (me.room || me.name) ? ` from the ${from}` : ''}`, body: text, ms: 20000 });
   setTimeout(() => { ears.pause(); mouth.say(text); }, 1500); // after the third tone
 }
 function tellRoom(d, text) {
-  if (d.id === me.id && iHold()) { sfx.play('announce', { force: true }); setTimeout(() => { showSaid(text); say(text); }, 900); return; }
+  if (d.id === me.id && iHold()) { sfx.play('announce', { force: true, alert: true }); setTimeout(() => { showSaid(text); say(text); }, 900); return; }
   if (iHold()) giveTo(d.id, 'tell', null, text);
   else mesh.send('announce', { text, from: me.room || me.name }, d.id);
 }
@@ -727,7 +733,7 @@ function ring(c) {
   sfx.unlock();
   const sound = c.kind === 'alarm' ? 'alarm' : 'ring';
   const started = now();
-  const play = () => sfx.play(sound, { force: true, gain: Math.min(1, 0.4 + ((now() - started) / 45000) * 0.6) });
+  const play = () => sfx.play(sound, { force: true, alert: true, gain: Math.min(1, 0.4 + ((now() - started) / 45000) * 0.6) });
   play();
   ringing.set(c.id, { loop: setInterval(play, c.kind === 'alarm' ? 3900 : 3500), started });
   orb?.perk();
@@ -750,15 +756,34 @@ function clockLines() {
   if (!clocks.size) return [];
   return [...clocks.values()].sort((a, b) => a.at - b.at).map((c) => `${c.kind === 'timer' ? 'Timer' : 'Alarm'} "${c.label}" on ${roomsOf(c.where.filter((id) => liveDevices().some((d) => d.id === id))) || 'a screen that is off'}: ${ringing.has(c.id) ? 'ringing now' : c.kind === 'timer' ? `${sayLeft(c.at - now())} left` : new Date(c.at).toLocaleString([], { weekday: 'short', hour: 'numeric', minute: '2-digit' })}.`);
 }
+// Countdown pills: built once per clock, then only their text changes (no
+// rebuild every second, so nothing flashes).
 function renderClocks() {
   const host = $('clocks');
   if (!host) return;
   const mine = [...clocks.values()].filter((c) => c.where.includes(me.id)).sort((a, b) => a.at - b.at).slice(0, 4);
-  const html = mine.map((c) => `<button class="clock-pill${ringing.has(c.id) ? ' ringing' : ''}" data-clock="${esc(c.id)}" aria-label="${esc(c.label)}, ${c.kind === 'timer' ? sayLeft(c.at - now()) + ' left' : 'alarm'}. Tap to cancel."><i class="ph ph-${c.kind === 'alarm' ? 'alarm' : 'timer'}" aria-hidden="true"></i><span>${esc(c.label)}</span><b>${c.kind === 'timer' ? showLeft(c.at - now()) : new Date(c.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</b></button>`).join('');
-  if (host.innerHTML !== html) {
-    host.innerHTML = html;
-    host.querySelectorAll('[data-clock]').forEach((b) => (b.onclick = () => { sfx.play('click'); stopClock(b.dataset.clock); }));
-  }
+  const want = new Set(mine.map((c) => c.id));
+  let changed = false;
+  for (const el of [...host.children]) if (!want.has(el.dataset.clock)) { el.remove(); changed = true; }
+  mine.forEach((c, i) => {
+    let el = host.querySelector(`[data-clock="${CSS.escape(c.id)}"]`);
+    if (!el) {
+      el = document.createElement('button');
+      el.className = 'clock-pill';
+      el.dataset.clock = c.id;
+      el.innerHTML = `<i class="ph ph-${c.kind === 'alarm' ? 'alarm' : 'timer'}" aria-hidden="true"></i><span></span><b></b>`;
+      el.onclick = () => { sfx.play('click'); stopClock(c.id); };
+      changed = true;
+    }
+    if (host.children[i] !== el) host.insertBefore(el, host.children[i] || null);
+    const left = c.kind === 'timer' ? showLeft(c.at - now()) : new Date(c.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    const label = c.label || (c.kind === 'alarm' ? 'Alarm' : 'Timer');
+    if (el.children[1].textContent !== label) el.children[1].textContent = label;
+    if (el.children[2].textContent !== left) el.children[2].textContent = left;
+    el.classList.toggle('ringing', ringing.has(c.id));
+    el.setAttribute('aria-label', `${label}, ${c.kind === 'timer' ? sayLeft(c.at - now()) + ' left' : 'alarm at ' + left}. Tap to cancel.`);
+  });
+  if (changed) placeClock(true);
 }
 
 // ── the notice card: announcements and ringing timers ───────────────────────
@@ -975,7 +1000,9 @@ function placeClock(force = false) {
   if (!b || !d) return;
   const W = innerWidth, H = innerHeight, narrow = W <= 720;
   const resting = document.documentElement.classList.contains('resting');
-  const key = [W, H, resting, b.textContent, d.textContent].join('|');
+  const pills = $('clocks');
+  const nPills = pills ? pills.children.length : 0;
+  const key = [W, H, resting, b.textContent, d.textContent, nPills].join('|');
   if (!force && key === clockKey) return;
   const tw = b.offsetWidth, th = b.offsetHeight, dw = d.offsetWidth, dh = d.offsetHeight;
   if (!tw) return; // stage hidden (setup); placed once it shows
@@ -985,18 +1012,26 @@ function placeClock(force = false) {
   const ob = $('btnOptions')?.getBoundingClientRect();
   const safeTop = ob && ob.height ? ob.top : 20; // the options button already sits under the status bar
   let ts, ds, tx, ty, dx, dy;
+  if (pills) pills.classList.toggle('row', resting);
+  const pillsH = nPills ? (resting ? 44 : nPills * 44) : 0;
   if (resting) {
-    ts = Math.max(64, Math.min(200, W * 0.19)) / BIG;
     ds = Math.max(16, Math.min(22, W * 0.02)) / DATE;
-    const blockH = th * ts * 0.98 + 12 + dh * ds;
-    const top = Math.max(safeTop + 70, (H - wave) / 2 - blockH / 2);
+    // fit time + date + the timer row between the top bar and the wave
+    const room = H - wave - (safeTop + 70) - 20;
+    const extra = 12 + dh * ds + (nPills ? 18 + pillsH : 0);
+    ts = Math.min(Math.max(64, Math.min(200, W * 0.19)), (room - extra) / (th * 0.98) * BIG) / BIG;
+    ts = Math.max(48 / BIG, ts);
+    const blockH = th * ts * 0.98 + extra;
+    const top = Math.max(safeTop + 70, safeTop + 70 + (room - blockH) / 2);
     tx = (W - tw * ts) / 2; ty = top;
     dx = (W - dw * ds) / 2; dy = top + th * ts * 0.98 + 12;
+    if (pills) pills.style.setProperty('--clocks-top', `${dy + dh * ds + 18}px`);
   } else {
     const right = narrow ? 22 : 34;
     ts = (narrow ? 26 : 34) / BIG; ds = 14 / DATE;
     tx = W - right - tw * ts; ty = safeTop + 4;
     dx = W - right - dw * ds; dy = ty + th * ts * 0.9 + 4;
+    if (pills) pills.style.setProperty('--clocks-top', `${dy + dh * ds + 12}px`);
   }
   const clock = $('clock');
   if (first) clock.classList.add('no-anim');
@@ -1592,6 +1627,8 @@ function panel(tab) {
         ${toggleRow('sfx', 'Sound effects', 'Little chimes when I hear you, fly between rooms, or finish something.')}
         <div class="field"><label for="sSfxVol">Volume</label><input type="range" id="sSfxVol" min="0" max="1" step="0.05" value="${settings.sfxVol}"></div>
         <button class="btn small" data-act="sfxTest"><i class="ph ph-speaker-high" aria-hidden="true"></i>Play a sample</button>
+        <div class="field"><label for="sAlertVol">Alerts volume</label><input type="range" id="sAlertVol" min="0" max="1" step="0.05" value="${settings.alertVol}"><small class="fine">Timers, alarms and announcements. They play even with sound effects off.</small></div>
+        <button class="btn small" data-act="alertTest"><i class="ph ph-bell-ringing" aria-hidden="true"></i>Play the alert</button>
       </div>
       <div class="card"><h3>My voice</h3>
         <div class="chips" role="radiogroup" aria-label="Which voice">
@@ -1611,7 +1648,7 @@ function panel(tab) {
   // turns
   const list = turns.slice().reverse();
   return `
-    ${list.length ? list.slice(0, 80).map((t) => `<div class="turn"><div class="meta"><span><i class="ph ph-user" aria-hidden="true"></i>${esc(t.who)}</span><span>${roomIcon(t.room)}${esc(t.room || t.device)}</span><span><i class="ph ph-clock" aria-hidden="true"></i>${new Date(t.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span></div><div class="q">${esc(t.text)}</div><div class="a">${esc(t.reply || '…')}</div></div>`).join('') : '<div class="empty">No turns yet. Say "Hey Caden".</div>'}
+    ${list.length ? list.slice(0, 80).map((t) => `<div class="turn"><div class="meta"><span><i class="ph ph-user" aria-hidden="true"></i>${esc(t.who)}</span><span>${roomIcon(t.room)}${esc(t.room || t.device)}</span><span><i class="ph ph-clock" aria-hidden="true"></i>${new Date(t.at).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</span></div><div class="q">${esc(t.text)}</div><div class="a">${esc(stripRemember(t.reply) || '…')}</div></div>`).join('') : '<div class="empty">No turns yet. Say "Hey Caden".</div>'}
     ${list.length ? '<button class="btn small ghost danger" data-act="clearTurns">Clear history on every device</button>' : ''}`;
 }
 
@@ -1641,6 +1678,8 @@ function bindPanel(host) {
     orb.setQuality(q);
     refreshQuality();
   };
+  const av = host.querySelector('#sAlertVol');
+  if (av) av.oninput = () => { settings.alertVol = Number(av.value); sfx.setAlertVolume(settings.alertVol); saveSettings(); };
   const vol = host.querySelector('#sSfxVol');
   if (vol) vol.oninput = () => { settings.sfxVol = Number(vol.value); sfx.setVolume(settings.sfxVol); saveSettings(); };
   const nv = host.querySelector('#sNvVoice');
@@ -1656,6 +1695,7 @@ function bindPanel(host) {
 
 async function act(a, el) {
   if (a === 'copy') { try { await navigator.clipboard.writeText(el.dataset.v); toast('Invite link copied'); } catch { toast(el.dataset.v); } }
+  if (a === 'alertTest') { sfx.unlock(); sfx.play('ring', { force: true, alert: true }); return; }
   if (a === 'wakePerm') { try { NativeApp()?.openWakeSettings?.(el.dataset.v); } catch { /* */ } return; }
   if (a === 'leave' && confirm('Leave this home on this device?')) leaveHome();
   if (a === 'saveDevice') {

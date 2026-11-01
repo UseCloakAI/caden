@@ -8,7 +8,7 @@ export function parseDuration(text) {
   const clock = t.match(/^(\d+):(\d{1,2})(?::(\d{1,2}))?$/);
   if (clock) return clock[3] != null ? (+clock[1] * 3600 + +clock[2] * 60 + +clock[3]) * 1000 : (+clock[1] * 60 + +clock[2]) * 1000;
   let ms = 0, hit = false;
-  const re = /(\d+(?:\.\d+)?)\s*(h(?:ours?|rs?)?|m(?:in(?:ute)?s?)?|s(?:ec(?:ond)?s?)?)\b/g;
+  const re = /(\d+(?:\.\d+)?)\s*(h(?:ours?|rs?)?|m(?:in(?:ute)?s?)?|s(?:ec(?:ond)?s?)?)(?![a-z])/g; // "1h10m": no word break after h
   let m;
   while ((m = re.exec(t))) {
     hit = true;

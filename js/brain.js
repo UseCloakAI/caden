@@ -22,7 +22,12 @@ async function brainCall(body) {
 export const brainSync = (home) => brainCall({ action: 'sync', home });
 export const brainForget = (home, id) => brainCall({ action: 'forget', home, id });
 export const brainClear = (home) => brainCall({ action: 'clear', home });
-export const stripRemember = (s) => String(s || '').split('\n').filter((l) => !/^\s*(REMEMBER:|DO:|<search\b)/i.test(l)).join('\n').trim().replace(/^\[[^\]\n]{1,40}\]\s*/, '');
+// The model sometimes runs an action onto the end of a sentence ("Done.DO: ...").
+// Put every DO: / REMEMBER: / <search> on its own line before anything reads it.
+export const splitActions = (s) => String(s || '').replace(/([^\n])[ \t]*(?=\b(?:DO|REMEMBER):|<search\b)/g, '$1\n');
+// The speakable part of a sentence: everything before an inline action.
+export const speakable = (s) => String(s || '').split(/\b(?:DO|REMEMBER):|<search\b/)[0].trim();
+export const stripRemember = (s) => splitActions(s).split('\n').filter((l) => !/^\s*(REMEMBER:|DO:|<search\b)/i.test(l)).join('\n').trim().replace(/^\[[^\]\n]{1,40}\]\s*/, '');
 
 export function homeContext({ room, device, people, here, place, rooms = [], clocks = [] }) {
   const now = new Date();
