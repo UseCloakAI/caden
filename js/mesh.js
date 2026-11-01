@@ -1,10 +1,15 @@
-// Mesh — every device in a home on one channel.
-// Transport: Supabase Realtime broadcast (raw Phoenix websocket, no SDK) plus a
-// BroadcastChannel so tabs on one machine also hear each other instantly.
+// Mesh: every device in a home on one channel.
+// Transports, fastest first:
+//   link      direct WebRTC data channels between devices (js/lan.js): a few ms
+//             on the same LAN, and they keep working if the internet drops
+//   tab       BroadcastChannel, for tabs on one machine
+//   relay     Supabase Realtime broadcast (raw Phoenix websocket, no SDK):
+//             discovery, signaling for the links, and the fallback
 // Every payload is AES-GCM encrypted with a key derived from the home code, and
 // the channel name is a hash of it — the server only ever relays ciphertext.
 import { SB_URL, SB_KEY } from './config.js';
 import { uid } from './store.js';
+import { Lan, MAX_DC } from './lan.js';
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -31,7 +36,12 @@ export class Mesh extends EventTarget {
     this.seen = new Map(); // message id -> time, dedupes the two transports
     this.online = false;
     this.retry = 0;
+    this.lan = null;
   }
+
+  // Message types that always go through the relay as well: they're how a
+  // device that just joined finds everyone (and how links get set up).
+  static RELAY_ALWAYS = new Set(['hello', 'beat', 'bye', 'rtc']);
 
   async join(code) {
     this.leave();
@@ -39,7 +49,12 @@ export class Mesh extends EventTarget {
     this.key = await deriveKey(code);
     this.topic = await topicFor(code);
     this.bc = new BroadcastChannel(this.topic);
-    this.bc.onmessage = (e) => this._recv(e.data);
+    this.bc.onmessage = (e) => this._recv(e.data, 'tab');
+    this.lan = new Lan(this.self, {
+      signal: (to, data) => this.send('rtc', data, to),
+      deliver: (packet, via) => this._recv(packet, via),
+    });
+    this.lan.addEventListener('change', (e) => this.dispatchEvent(new CustomEvent('links', { detail: e.detail })));
     this._connect();
   }
 
@@ -49,7 +64,8 @@ export class Mesh extends EventTarget {
     clearTimeout(this.reconnectT);
     try { this.ws?.close(); } catch { /* already closed */ }
     try { this.bc?.close(); } catch { /* already closed */ }
-    this.ws = this.bc = null;
+    this.lan?.close();
+    this.ws = this.bc = this.lan = null;
     this._status(false);
   }
 
@@ -68,7 +84,7 @@ export class Mesh extends EventTarget {
       let m; try { m = JSON.parse(e.data); } catch { return; }
       if (m.topic !== rt) return;
       if (m.event === 'phx_reply' && m.payload?.status === 'ok' && !this.online) { this.retry = 0; this._status(true); }
-      if (m.event === 'broadcast' && m.payload?.event === 'm') this._recv(m.payload.payload);
+      if (m.event === 'broadcast' && m.payload?.event === 'm') this._recv(m.payload.payload, 'relay');
       if (m.event === 'phx_error' || m.event === 'phx_close') ws.close();
     };
     ws.onclose = () => {
@@ -102,10 +118,26 @@ export class Mesh extends EventTarget {
     const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, this.key, enc.encode(JSON.stringify(msg)));
     const packet = { iv: b64(iv), c: b64(ct) };
     try { this.bc?.postMessage(packet); } catch { /* closed */ }
-    this._raw({ topic: 'realtime:' + this.topic, event: 'broadcast', payload: { type: 'broadcast', event: 'm', payload: packet } });
+    // Links first; the relay only when someone can't be reached directly.
+    let relay = Mesh.RELAY_ALWAYS.has(type);
+    if (!relay && this.lan) {
+      const str = JSON.stringify(packet);
+      if (to) relay = !this.lan.sendTo(to, str);
+      else {
+        for (const p of this.lan.openLinks()) if (!this.lan.sendTo(p.id, str)) relay = true;
+        if (this.lan.missing() || str.length > MAX_DC) relay = true;
+      }
+    } else if (relay && this.lan && type !== 'rtc') {
+      const str = JSON.stringify(packet);
+      if (to) this.lan.sendTo(to, str); else for (const p of this.lan.openLinks()) this.lan.sendTo(p.id, str);
+    } else if (!this.lan) relay = true;
+    if (relay) this._raw({ topic: 'realtime:' + this.topic, event: 'broadcast', payload: { type: 'broadcast', event: 'm', payload: packet } });
   }
 
-  async _recv(packet) {
+  // id -> {path: 'lan' | 'p2p', rtt} for devices with an open link
+  links() { return this.lan?.stats() || {}; }
+
+  async _recv(packet, via = 'relay') {
     if (!packet?.c || !this.key) return;
     let msg;
     try {
@@ -119,6 +151,11 @@ export class Mesh extends EventTarget {
       const cut = Date.now() - 60000;
       for (const [k, v] of this.seen) if (v < cut) this.seen.delete(k);
     }
+    // Every device we hear from gets a direct link; signaling stays in here.
+    if (msg.type === 'bye') this.lan?.drop(msg.from, { gone: true });
+    else this.lan?.seen(msg.from);
+    if (msg.type === 'rtc') { this.lan?.signal(msg.from, msg.data); return; }
+    msg.via = via;
     this.dispatchEvent(new CustomEvent('msg', { detail: msg }));
   }
 }

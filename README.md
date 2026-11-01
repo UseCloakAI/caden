@@ -10,7 +10,7 @@ Runs as a web app (GitHub Pages) and as an Android APK. Powered by [Cloak](https
 |---|---|---|
 | Brain | Caden Supabase project → edge function `brain` | Keeps each home's turns + memories, builds the prompt, streams the reply from Cloak's `home` tier |
 | Model | `api.usecloak.org` `/v1/chat`, `model: "home"` | Cloak's NVIDIA key pool only (Nemotron → GLM-5.3-Flash → Laguna XS) + the spoken-reply `HOME_PLAYBOOK` |
-| Mesh | Supabase Realtime broadcast (Caden project) | Links a home's devices; every message AES-GCM encrypted with the home code |
+| Mesh | WebRTC data channels over the LAN, Supabase Realtime as relay | Devices talk directly over the home network (~1 ms); the relay handles discovery, link setup and fallback. Every message AES-GCM encrypted with the home code |
 | Eyes | `js/faces.js` (face-api / tfjs, on device) | Detects + recognizes faces; frames never leave the device, only 128-number descriptors (encrypted) |
 | Ears | `js/voice.js` | Wake word + commands: Android SpeechRecognizer → Web Speech API → Cloak `/v1/transcribe` fallback |
 | Mouth | `js/voice.js` | Android TextToSpeech or `speechSynthesis`, sentence by sentence as the reply streams |
@@ -42,6 +42,16 @@ For a screen with a webcam (wall display, kitchen laptop, TV box): Settings → 
 
 Targets get bigger, the type box hides, and a small hand preview (drawn from landmarks, never the camera image) shows you're being tracked. External links are not pressable, so a kiosk can't navigate away. Faces and hands share one camera stream (`js/camera.js`). For an unattended kiosk, launch Chrome with `--autoplay-policy=no-user-gesture-required` so Caden can speak without a first tap.
 
+### LAN links
+
+Every device opens a direct WebRTC data channel to every other device in the home (`js/lan.js`). On the same network that's a host-to-host connection: messages arrive in about **1 ms** instead of a cloud round trip (41-49 ms from a datacenter in testing, more from a home connection). Handoffs, claims, turns and face syncs go over the links; heartbeats go over both, so a device that just joined still finds everyone.
+
+- Signaling (offer, answer, ICE) rides the encrypted Realtime channel, so the relay never sees SDP or local addresses.
+- Either side may start; the higher id yields on a collision ("perfect negotiation").
+- A device without a working link (no WebRTC, strict NAT) just keeps using the relay; a failed link retries after 10s.
+- If the internet drops, devices that already have links keep working with each other (Caden still moves; the brain needs the internet).
+- Settings → Home → Devices shows each link: **LAN** with its ping, **Direct** (peer to peer over the internet) or **Cloud**.
+
 ### Turns
 
 Every exchange is a turn `{who, device, room, text, reply}`. `who` is the person recognized in front of the device (or the last speaker during a follow-up). The model sees the household conversation as `[Name] text` lines, so several people can take turns and Caden answers the right one. After answering, Caden keeps listening for ~8s without the wake word.
@@ -58,7 +68,8 @@ css/caden.css         design (warm light / cozy dark, rounded, springy; one cora
 fonts/                Fredoka + Nunito, self-hosted (OFL)
 icons/ph/             Phosphor icon font, vendored (MIT)
 js/app.js             the agent: holder election, handoffs, turns, voice loop, settings
-js/mesh.js            encrypted Realtime broadcast + BroadcastChannel
+js/mesh.js            encrypted messaging: LAN links first, then BroadcastChannel / Realtime relay
+js/lan.js             WebRTC data channels between devices, path + ping
 js/faces.js           face detection / recognition / enrollment
 js/voice.js           ears, mouth, wake-word matching
 js/brain.js           brain client (Supabase edge function, Cloak fallback)

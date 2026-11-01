@@ -291,6 +291,8 @@ button { cursor: pointer; }
 .line small { display: block; color: var(--ink3); font-weight: 700; font-size: 12px; }
 .badge { flex: none; padding: 4px 10px; border-radius: var(--pill); font-size: 12px; font-weight: 800; background: color-mix(in oklab, var(--coral) 16%, var(--card)); color: var(--acc-ink); }
 .badge.soft { background: var(--bg2); color: var(--ink2); }
+.badge .ph { font-size: 13px; vertical-align: -2px; }
+.line .badge + .badge { margin-left: -6px; }
 .foot { text-align: center; }
 .foot a { color: var(--ink2); }
 .code { font-family: var(--fd); font-size: 24px; font-weight: 600; letter-spacing: .02em; color: var(--acc-ink); }

@@ -505,7 +505,33 @@ function tickClock() {
 
 // ── status dots ──────────────────────────────────────────────────────────────
 function dot(id, cls, title) { const el = $(id); el.className = 'dot ' + cls; el.title = title; }
-mesh.addEventListener('status', (e) => dot('dotNet', e.detail ? 'on' : 'warn', e.detail ? 'Linked with your home' : 'Reconnecting to your home…'));
+// Home link dot: direct LAN links first, then the cloud relay.
+let linkStats = {};
+function netDot() {
+  const ls = Object.values(linkStats);
+  const lan = ls.filter((l) => l.path === 'lan'), direct = ls.filter((l) => l.path !== 'lan');
+  const ms = (arr) => { const r = arr.map((l) => l.rtt).filter((x) => x != null); if (!r.length) return ''; const m = Math.max(...r); return m < 1 ? ' (<1 ms)' : ` (${Math.round(m)} ms)`; };
+  const cloud = mesh.online ? '' : ', cloud offline';
+  if (lan.length) dot('dotNet', 'on', `Linked over your home network${ms(lan)}${cloud}`);
+  else if (direct.length) dot('dotNet', 'on', `Linked directly${ms(direct)}${cloud}`);
+  else if (mesh.online) dot('dotNet', 'on', 'Linked through the cloud');
+  else dot('dotNet', 'warn', 'Reconnecting to your home…');
+}
+mesh.addEventListener('status', netDot);
+mesh.addEventListener('links', (e) => {
+  linkStats = e.detail;
+  netDot();
+  if (sheetTab === 'home') renderSheet();
+});
+const linkBadge = (id) => {
+  if (id === me.id) return '';
+  const l = linkStats[id];
+  if (!l) return '<span class="badge soft" title="Messages go through the cloud">Cloud</span>';
+  const ms = l.rtt != null ? ` ${l.rtt < 1 ? '<1' : Math.round(l.rtt)} ms` : '';
+  return l.path === 'lan'
+    ? `<span class="badge" title="Direct over your home network"><i class="ph ph-wifi-high" aria-hidden="true"></i> LAN${ms}</span>`
+    : `<span class="badge soft" title="Direct, over the internet"><i class="ph ph-arrows-left-right" aria-hidden="true"></i> Direct${ms}</span>`;
+};
 ears.addEventListener('state', (e) => {
   const { state, engine } = e.detail;
   dot('dotMic', state === 'on' ? 'on' : state === 'off' ? '' : 'off', state === 'on' ? `Hearing (${engine})` : state === 'unsupported' ? 'No microphone support here' : state === 'denied' ? 'Microphone blocked' : 'Not hearing');
@@ -824,7 +850,7 @@ function panel(tab) {
         <button class="btn small primary" data-act="saveDevice">Save</button>
       </div>
       <div class="card"><h3>Devices (${devs.length})</h3>
-        ${devs.map((d) => `<div class="line"><span class="avatar" style="background:var(--bg2);color:var(--ink)">${roomIcon(d.room)}</span><span class="grow"><b>${esc(d.room || d.name)}</b><small>${esc(d.name)}, ${d.kind === 'app' ? 'Android app' : 'web'}</small>${d.sees ? `<small>Sees ${esc(d.sees.name)}</small>` : ''}</span>${d.id === me.id ? '<span class="badge soft">This one</span>' : ''}${d.id === holder.id ? '<span class="badge">Caden</span>' : ''}</div>`).join('')}
+        ${devs.map((d) => `<div class="line"><span class="avatar" style="background:var(--bg2);color:var(--ink)">${roomIcon(d.room)}</span><span class="grow"><b>${esc(d.room || d.name)}</b><small>${esc(d.name)}, ${d.kind === 'app' ? 'Android app' : 'web'}</small>${d.sees ? `<small>Sees ${esc(d.sees.name)}</small>` : ''}</span>${linkBadge(d.id)}${d.id === me.id ? '<span class="badge soft">This one</span>' : ''}${d.id === holder.id ? '<span class="badge">Caden</span>' : ''}</div>`).join('')}
       </div>
       <div class="card"><h3>Senses</h3>
         ${toggleRow('mic', 'Listen for my name', `Hearing: ${esc(ears.engine || hearingEngines()[0] || 'not supported')}`)}
@@ -993,7 +1019,7 @@ function boot() {
   tickClock();
   stopEnroll();
   air = new AirNav();
-  if (/[?&]debug\b/.test(location.search)) window.__caden = { hands, air, settings }; // test hook
+  if (/[?&]debug\b/.test(location.search)) window.__caden = { hands, air, settings, mesh, holder: () => holder }; // test hook
   // #display boots straight into touch-free mode (kiosk screens).
   if (/(^|[#&])display\b/.test(location.hash)) { settings.display = true; saveSettings(); }
   applyDisplay();
