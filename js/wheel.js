@@ -1,19 +1,16 @@
-// Wheel: Caden's options. One button in the top-left corner; pressing it
-// unfurls a ring of options around that corner (Ribbon's orbit: a spring with
-// ~2% overshoot, nodes that trail when it spins fast, rubber-banded ends).
-// The option at the 45° slot is selected: full ink, slightly larger.
+// Wheel: Caden's options. One button in the top-left corner; pressing it drops
+// a glass list of options under it. A highlight rides on Ribbon's orbit spring
+// (k 200, c 25) from option to option and rubber-bands at the ends.
 //
-// Turn it any way you like: drag along it (with a flick it keeps going),
-// mouse wheel / trackpad, arrow keys, or swipe a hand in the air. Tap or pinch
-// any option to open it; Enter opens the selected one; Esc, the button again,
-// a tap outside, or a thumbs down closes it.
+// Every option is a plain, labelled row you can tap or pinch. To move the
+// highlight: slide a finger or mouse along the list, scroll the mouse wheel /
+// trackpad, arrow keys, or swipe a hand in the air. Enter opens the
+// highlighted one; Esc, the button again, a tap outside or a thumbs down
+// closes it.
 import { sfx } from './sfx.js';
 
-const STEP = 21;          // degrees between options
-const SLOT = 45;          // the selection slot (degrees from the x axis, clockwise)
 const SPRING = { k: 200, c: 25 }; // Ribbon's orbit spring
 const reduce = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
-const rad = (d) => (d * Math.PI) / 180;
 
 export class Wheel {
   // items: [{id, icon, label, run()}]
@@ -27,16 +24,17 @@ export class Wheel {
     this.root.hidden = true;
     this.root.setAttribute('role', 'menu');
     this.root.setAttribute('aria-label', 'Options');
-    this.root.innerHTML = '<div class="wheel-scrim" data-close></div><svg class="wheel-track" aria-hidden="true"><circle></circle></svg><div class="wheel-ring"></div>';
+    this.root.innerHTML = '<div class="wheel-scrim" data-close></div><div class="wheel-ring"><span class="wheel-hl" aria-hidden="true"></span></div>';
     document.body.appendChild(this.root);
     this.ring = this.root.querySelector('.wheel-ring');
-    this.track = this.root.querySelector('.wheel-track circle');
+    this.hl = this.root.querySelector('.wheel-hl');
     this.nodes = items.map((it, i) => {
       const b = document.createElement('button');
       b.className = 'wheel-item';
       b.type = 'button';
       b.setAttribute('role', 'menuitem');
       b.dataset.i = i;
+      b.style.setProperty('--n', i);
       b.innerHTML = `<span class="wheel-icon"><i class="ph ph-${it.icon}" aria-hidden="true"></i></span><span class="wheel-label">${it.label}</span>`;
       b.addEventListener('click', (e) => { e.stopPropagation(); if (this.dragged) return; this.choose(i); });
       this.ring.appendChild(b);
@@ -48,7 +46,6 @@ export class Wheel {
     this._tick = this._tick.bind(this);
   }
 
-  get radius() { return Math.max(170, Math.min(330, Math.min(innerWidth, innerHeight) * 0.42)); }
 
   show() {
     if (this.open) return;
@@ -56,8 +53,7 @@ export class Wheel {
     this.root.hidden = false;
     this.btn.setAttribute('aria-expanded', 'true');
     this.btn.classList.add('is-open');
-    // unfurl: start wound back two steps, spring into place
-    this.pos = this.index - 2.4; this.vel = 0; this.target = this.index;
+    this.pos = this.index; this.vel = 0; this.target = this.index;
     this.openedAt = performance.now();
     this.root.classList.remove('closing');
     void this.root.offsetWidth;
@@ -87,7 +83,7 @@ export class Wheel {
     const next = this.index + n;
     if (next < 0 || next >= this.items.length) {
       sfx.play('bump');
-      this.vel += n * 9; // stretch past the end, spring back
+      this.vel += n * 6; // stretch past the end, spring back
       return;
     }
     this.index = next;
@@ -111,41 +107,30 @@ export class Wheel {
   }
 
   _wire() {
-    // drag along the ring (touch, pen, mouse): angle around the corner → steps
+    // slide along the list (touch, pen, mouse): the highlight follows the finger
     let drag = null;
-    const angleAt = (x, y) => (Math.atan2(y - this.cy, x - this.cx) * 180) / Math.PI;
+    const rowAt = (y) => { const r = this.ring.getBoundingClientRect(); return (y - r.top - this.pad) / this.rowH - 0.5; };
     this.ring.addEventListener('pointerdown', (e) => {
       if (!this.open) return;
-      drag = { id: e.pointerId, a0: angleAt(e.clientX, e.clientY), p0: this.pos, last: performance.now(), lastA: angleAt(e.clientX, e.clientY), v: 0, moved: 0 };
+      drag = { id: e.pointerId, y0: e.clientY, moved: 0 };
       this.dragged = false;
     });
     addEventListener('pointermove', (e) => {
       if (!drag || e.pointerId !== drag.id) return;
-      const a = angleAt(e.clientX, e.clientY), now = performance.now();
-      const da = a - drag.a0;
-      drag.moved = Math.max(drag.moved, Math.abs(da));
-      if (drag.moved > 4) { this.dragged = true; this.ring.setPointerCapture?.(e.pointerId); }
+      drag.moved = Math.max(drag.moved, Math.abs(e.clientY - drag.y0));
+      if (drag.moved > 8) { this.dragged = true; this.ring.setPointerCapture?.(e.pointerId); }
       if (!this.dragged) return;
-      // dragging clockwise (down the arc) brings later options up
-      const p = drag.p0 - da / STEP;
-      const lo = -0.35, hi = this.items.length - 0.65;
-      this.pos = p < lo ? lo - (lo - p) * 0.3 : p > hi ? hi + (p - hi) * 0.3 : p; // rubber band
-      const want = Math.round(Math.max(0, Math.min(this.items.length - 1, this.pos)));
+      const p = rowAt(e.clientY), max = this.items.length - 1;
+      this.pos = this.target = p < 0 ? p * 0.3 : p > max ? max + (p - max) * 0.3 : p;
+      this.vel = 0;
+      const want = Math.round(Math.max(0, Math.min(max, p)));
       if (want !== this.index) { sfx.play('tick', { dir: want > this.index ? 1 : -1 }); this.index = want; this._mark(); }
-      const dt = Math.max(1, now - drag.last);
-      drag.v = (-(a - drag.lastA) / STEP) / (dt / 1000);
-      drag.last = now; drag.lastA = a;
-      this.vel = 0; this.target = this.pos;
     });
     const end = (e) => {
       if (!drag || e.pointerId !== drag.id) return;
       if (this.dragged) {
-        // a flick keeps going a little, then lands on the nearest option
-        const fling = Math.max(-3, Math.min(3, drag.v * 0.18));
-        const land = Math.round(Math.max(0, Math.min(this.items.length - 1, this.pos + fling)));
-        if (land !== this.index) sfx.play('tick', { dir: land > this.index ? 1 : -1 });
-        if (this.pos < 0 || this.pos > this.items.length - 1) sfx.play('bump');
-        this.index = land; this.target = land; this._mark();
+        if (this.pos < -0.2 || this.pos > this.items.length - 0.8) sfx.play('bump');
+        this.target = this.index;
         setTimeout(() => (this.dragged = false), 0);
       }
       drag = null;
@@ -166,10 +151,16 @@ export class Wheel {
       while (Math.abs(acc) >= notch) { this.step(Math.sign(acc)); acc -= Math.sign(acc) * notch; }
     }, { passive: false });
 
+    // hover moves the highlight too (desktop), quietly
+    this.nodes.forEach((n, i) => n.addEventListener('pointerenter', (e) => {
+      if (!this.open || e.pointerType !== 'mouse' || i === this.index) return;
+      this.index = i; this.target = i; this._mark(); sfx.play('tick', { dir: 1, gain: 0.5 });
+    }));
+
     addEventListener('keydown', (e) => {
       if (!this.open) return;
-      if (['ArrowDown', 'ArrowRight'].includes(e.key)) { e.preventDefault(); this.step(1); }
-      else if (['ArrowUp', 'ArrowLeft'].includes(e.key)) { e.preventDefault(); this.step(-1); }
+      if (['ArrowDown', 'ArrowRight'].includes(e.key)) { e.preventDefault(); this.step(1); this.nodes[this.index].focus({ preventScroll: true }); }
+      else if (['ArrowUp', 'ArrowLeft'].includes(e.key)) { e.preventDefault(); this.step(-1); this.nodes[this.index].focus({ preventScroll: true }); }
       else if (e.key === 'Enter' || e.key === ' ') { if (document.activeElement?.closest?.('.wheel-item')) return; e.preventDefault(); this.choose(); }
       else if (e.key === 'Escape') { e.preventDefault(); this.close(); this.btn.focus(); }
     });
@@ -179,33 +170,18 @@ export class Wheel {
     const dt = Math.min(0.05, (now - this.last) / 1000);
     this.last = now;
     if (!this.open && this.root.hidden) return;
-    // spring toward the target (Ribbon's orbit spring)
     if (reduce()) { this.pos = this.target; this.vel = 0; }
     else {
       const f = -SPRING.k * (this.pos - this.target) - SPRING.c * this.vel;
       this.vel += f * dt; this.pos += this.vel * dt;
     }
-    const b = this.btn.getBoundingClientRect();
-    this.cx = b.left + b.width / 2; this.cy = b.top + b.height / 2;
-    const R = this.radius;
-    this.track.setAttribute('cx', this.cx); this.track.setAttribute('cy', this.cy); this.track.setAttribute('r', R);
-    const since = (now - this.openedAt) / 1000;
-    this.nodes.forEach((n, i) => {
-      // follow-through: fast spins leave nodes a few degrees behind
-      const trail = Math.max(-5, Math.min(5, this.vel * 0.9));
-      const a = SLOT + (i - this.pos) * STEP + trail;
-      const x = this.cx + R * Math.cos(rad(a)), y = this.cy + R * Math.sin(rad(a));
-      const d = Math.abs(a - SLOT);
-      // visible arc: from just right of the button (−2°) down to just below it (92°)
-      const fade = a < -2 || a > 92 ? 0 : d <= 28 ? 1 : Math.max(0, 1 - (d - 28) / 22);
-      const focus = Math.max(0, 1 - Math.abs(i - this.pos));
-      const enter = this.root.classList.contains('opening') && !reduce() ? Math.min(1, Math.max(0, (since - 0.06 * i) / 0.45)) : 1;
-      n.style.translate = `${x}px ${y}px`;
-      n.style.opacity = (fade * enter).toFixed(3);
-      n.style.setProperty('--f', focus.toFixed(3));
-      n.style.pointerEvents = fade > 0.3 ? 'auto' : 'none';
-      n.tabIndex = fade > 0.3 ? 0 : -1;
-    });
+    const first = this.nodes[0];
+    this.rowH = first.offsetHeight || 56;
+    this.pad = first.offsetTop;
+    // the highlight stretches a little in the direction it's moving (follow-through)
+    const stretch = Math.min(0.35, Math.abs(this.vel) * 0.04);
+    this.hl.style.translate = `0 ${this.pad + this.pos * this.rowH}px`;
+    this.hl.style.scale = `1 ${1 + stretch}`;
     this.raf = requestAnimationFrame(this._tick);
   }
 }

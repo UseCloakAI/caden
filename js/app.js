@@ -21,6 +21,7 @@ import { Hands } from './hands.js';
 import { AirNav } from './airnav.js';
 import { Meter, score, pickLoudest } from './locate.js';
 import { sfx } from './sfx.js';
+import { where } from './where.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -40,7 +41,7 @@ let home = store.get('home');              // { code, id }
 let people = store.get('people', []);      // [{id,name,color,d:[...],updated,deleted?}]
 let turns = [];
 let memories = [];
-const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false, voiceEngine: 'nvidia', nvVoice: NV_VOICE, locate: true, voiceCal: null, sfx: true, sfxVol: 0.6 }, store.get('settings', {}));
+const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false, voiceEngine: 'nvidia', nvVoice: NV_VOICE, locate: true, voiceCal: null, sfx: true, sfxVol: 0.6, volume: 100, dim: 0 }, store.get('settings', {}));
 const saveSettings = () => store.set('settings', settings);
 
 const devices = new Map();                 // id -> {id,name,room,kind,last,holder,epoch,sees,phase}
@@ -283,6 +284,8 @@ function listenNow() {
   if (iHold() && !(mode === 'command' && now() < modeUntil)) orb?.perk(); // heard you
   mode = 'command';
   modeUntil = now() + 7000;
+  clockSoon = false;
+  document.documentElement.classList.remove('resting');
   activity = now();
   if (iHold()) { setPhase('listening'); $('capYou').innerHTML = ''; }
 }
@@ -423,21 +426,24 @@ async function runTurn(text, who) {
   const ctrl = new AbortController();
   turnCtrl = ctrl;
   streaming = true;
+  const place = await Promise.race([where(), new Promise((r) => setTimeout(() => r(null), 1500))]).catch(() => null);
   const context = homeContext({
-    room: me.room, device: me.name,
+    room: me.room, device: me.name, place,
+    rooms: liveDevices().map((d) => d.room || d.name),
     people: alive().map((p) => p.name),
     here: freshSight() ? [lastSight.person.name] : [],
   });
   try {
     const full = await think({
-      home: home.id, turn, turns, system: context, signal: ctrl.signal,
+      home: home.id, turn, turns, system: context, where: place, signal: ctrl.signal,
       onSentence: (s) => {
-        if (ctrl.signal.aborted || /^\s*REMEMBER:/i.test(s)) return;
+        if (ctrl.signal.aborted || HIDDEN_LINE.test(s)) return;
         appendSaid(s);
         say(s);
       },
     });
     turn.reply = stripRemember(full) || '…';
+    runActions(full, text);
   } catch (e) {
     if (ctrl.signal.aborted) return;
     turn.reply = "Sorry, I couldn't reach my brain just now. Try again in a moment.";
@@ -455,6 +461,82 @@ async function runTurn(text, who) {
   if (!mouth.speaking) afterSpeaking();
 }
 
+// ── things Caden can do: DO: lines at the end of a reply (never spoken) ─────
+const HIDDEN_LINE = /^\s*(REMEMBER:|DO:|<search\b)/i;
+let pendingGo = null;
+// The model sometimes adds an action nobody asked for; only act on the kind of
+// thing the person actually said.
+const ASKED = {
+  go: /\b(go|move|head|come|switch|send|jump|hop|over to|to the|in the)\b/i,
+  dim: /\b(dim|dark|darker|bright|brighter|brightness|screen|light)\b/i,
+  volume: /\b(volume|loud|louder|quiet|quieter|soft|softer|turn (it |yourself )?(up|down)|mute)\b/i,
+  clock: /\b(clock|rest|sleep|idle|screensaver|that's all|good ?night)\b/i,
+};
+function runActions(full, said = '') {
+  for (const line of String(full || '').split('\n')) {
+    const m = line.match(/^\s*DO:\s*([a-z]+)\s*(.*)$/i);
+    if (!m) continue;
+    const verb = m[1].toLowerCase(), arg = m[2].trim().replace(/\s+to move.*$/i, '').replace(/[.]+$/, '');
+    const kind = verb === 'bright' || verb === 'undim' ? 'dim' : verb;
+    if (ASKED[kind] && !ASKED[kind].test(said)) continue;
+    if (verb === 'go') pendingGo = arg;
+    else if (verb === 'dim') setDim(parseFloat(arg));
+    else if (verb === 'bright' || verb === 'undim') setDim(0);
+    else if (verb === 'volume') setVolume(parseFloat(arg));
+    else if (verb === 'clock') clockSoon = true;
+  }
+  if (pendingGo && !mouth.speaking) goNow();
+}
+function findRoom(name) {
+  const q = normalize(String(name || '')).replace(/^the /, '');
+  if (!q) return null;
+  const list = liveDevices();
+  return list.find((d) => normalize(d.room || '') === q) || list.find((d) => normalize(d.name || '') === q)
+    || list.find((d) => normalize(`${d.room} ${d.name}`).includes(q) || q.includes(normalize(d.room || '\u0000')));
+}
+function goNow() {
+  const d = findRoom(pendingGo);
+  pendingGo = null;
+  if (d) sendTo(d, true);
+}
+// Send Caden to a device (rooms bar, or "go to the kitchen").
+function sendTo(d, quiet = false) {
+  if (!d || d.id === holder.id) { if (!quiet) sfx.play('bump'); return; }
+  if (d.id === me.id) { claim('tap'); return; }
+  if (iHold()) giveTo(d.id, 'tap', null);
+  else mesh.send('sendto', { to: d.id }, holder.id);
+}
+function setDim(v) {
+  settings.dim = Math.max(0, Math.min(90, isFinite(v) ? v : 0));
+  saveSettings(); applyDim();
+}
+function applyDim() {
+  const el = $('dimmer');
+  if (el) el.style.opacity = String((settings.dim / 100) * 0.9);
+  try { window.CadenNative?.setBrightness?.(1 - settings.dim / 100); } catch { /* old APK */ }
+}
+function setVolume(v) {
+  if (!isFinite(v)) return;
+  settings.volume = Math.max(0, Math.min(100, v));
+  saveSettings(); applyVolume();
+}
+function applyVolume() {
+  mouth.volume = settings.volume / 100;
+  sfx.setVolume(settings.sfxVol * (settings.volume / 100));
+}
+
+// ── resting: after a quiet minute the clock takes the middle of the screen ──
+let clockSoon = false;
+function isResting() {
+  if (clockSoon && phase === 'idle' && !mouth.speaking) return true;
+  return now() - activity > 45000 && phase === 'idle' && !mouth.speaking && !streaming
+    && !(mode === 'command' && now() < modeUntil) && !wheel?.open && !$('sheetHost').firstElementChild;
+}
+function stir() {
+  activity = now(); clockSoon = false;
+  document.documentElement.classList.remove('resting');
+}
+
 function say(s) {
   ears.pause();
   mouth.say(s);
@@ -462,6 +544,7 @@ function say(s) {
 
 function afterSpeaking() {
   if (streaming) return;
+  if (pendingGo) { setTimeout(goNow, 400); }
   ears.resume();
   if (!iHold()) return;
   activity = now();
@@ -593,7 +676,7 @@ function renderDock() {
     const html = `<span class="k" aria-hidden="true">${roomIcon(d.room)}</span>${esc(d.room || d.name)}`;
     if (b.innerHTML !== html) b.innerHTML = html;
     b.setAttribute('aria-label', `${d.room || d.name}${d.id === holder.id ? ', Caden is here' : ''}${d.id === me.id ? ', this device' : ''}`);
-    b.onclick = d.id === me.id && !iHold() ? () => claim('tap') : null;
+    b.onclick = () => { sfx.play('click'); sendTo(d); };
     // keep DOM order = sorted order
     const after = prev ? prev.nextSibling : nav.querySelector('.puck').nextSibling;
     if (b !== after) nav.insertBefore(b, after);
@@ -784,6 +867,7 @@ mesh.addEventListener('msg', (e) => {
     case 'turn': mergeTurn(data.turn); break;
     case 'turns': for (const t of data.list || []) mergeTurn(t); break;
     case 'claim': onClaim(from, data); break;
+    case 'sendto': if (iHold() && data.to) { const d = liveDevices().find((x) => x.id === data.to); if (d) sendTo(d); } break;
     case 'heard': onRemoteHeard(from, data.score); break;
     case 'handoff': onHandoff(from, data); break;
   }
@@ -1293,6 +1377,7 @@ function stopEnroll() {
 // ── ticks ────────────────────────────────────────────────────────────────────
 setInterval(() => {
   tickClock();
+  document.documentElement.classList.toggle('resting', isResting());
   if (mode === 'command' && now() > modeUntil) {
     mode = 'wait';
     if (iHold() && phase === 'listening') { setPhase('idle'); sfx.play('cancel'); }
@@ -1337,6 +1422,9 @@ function boot() {
   giveVoiceMeter();
   document.addEventListener('pointerdown', giveVoiceMeter, { once: true });
   mouth.rate = settings.rate;
+  applyVolume(); applyDim();
+  for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, stir, { capture: true, passive: true });
+  where().catch(() => {});
   mouth.voiceName = settings.voice;
   applyVoice();
   applyTyping();
@@ -1344,7 +1432,7 @@ function boot() {
   stopEnroll();
   air = new AirNav();
   air.onPress = () => sfx.play('click');
-  if (/[?&]debug\b/.test(location.search)) window.__caden = { wheel: () => wheel, setWide: (v) => setWide(v), appendSaid: (t) => appendSaid(t), hands, air, settings, mesh, meter, sfx, onHeard, holder: () => holder, lastLocate: () => lastLocate }; // test hook
+  if (/[?&]debug\b/.test(location.search)) window.__caden = { wheel: () => wheel, setWide: (v) => setWide(v), appendSaid: (t) => appendSaid(t), hands, air, settings, mesh, meter, sfx, onHeard, holder: () => holder, lastLocate: () => lastLocate, runActions: (f, t) => runActions(f, t), rest: () => { activity = 0; } }; // test hook
   // #display boots straight into touch-free mode (kiosk screens).
   if (/(^|[#&])display\b/.test(location.hash)) { settings.display = true; saveSettings(); }
   applyDisplay();

@@ -73,6 +73,9 @@ Every device opens a direct WebRTC data channel to every other device in the hom
 - If the internet drops, devices that already have links keep working with each other (Caden still moves; the brain needs the internet).
 - Settings → Home → Devices shows each link: **LAN** with its ping, **Direct** (peer to peer over the internet) or **Cloud**.
 
+### What Caden knows and can do
+Live weather for your home (Open-Meteo, free), where the home is (device location if allowed, else a coarse IP lookup), and the web (Cloak's search) for anything current: news, scores, prices, places nearby. It can also move itself to another screen ("go to the kitchen"), dim this screen, change its volume, or rest on the big clock. The rooms bar at the bottom shows every screen; tap one to send Caden there.
+
 ### Turns
 
 Every exchange is a turn `{who, device, room, text, reply}`. `who` is the person recognized in front of the device (or the last speaker during a follow-up). The model sees the household conversation as `[Name] text` lines, so several people can take turns and Caden answers the right one. After answering, Caden keeps listening for ~8s without the wake word.

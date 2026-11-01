@@ -516,7 +516,7 @@ html.is-away .clock { opacity: 1 !important; }
 .caption .you b { font-weight: 600; color: var(--ink); }
 .caption .said, .here.wide .caption .said { font-family: var(--fd); font-weight: 500; font-size: clamp(26px, 3.6vmin, 40px); line-height: 1.22; letter-spacing: -0.025em; }
 .hint { position: fixed; left: clamp(28px, 6vw, 96px); bottom: calc(max(16px, env(safe-area-inset-bottom)) + 22px); font-size: 16px; font-weight: 500; z-index: 2; }
-.dock .rooms { display: none; }
+/* rooms bar re-enabled below (layout block) */
 .dock { padding-bottom: calc(max(16px, env(safe-area-inset-bottom)) + 18px); }
 .away { justify-items: start; text-align: left; align-content: start; padding: calc(max(20px, env(safe-area-inset-top)) + 120px) clamp(28px, 6vw, 96px) 0; }
 .away h2 { font-family: var(--fd); font-weight: 500; font-size: clamp(30px, 4.6vmin, 48px); letter-spacing: -0.03em; }
@@ -527,34 +527,104 @@ html.is-away .clock { opacity: 1 !important; }
   .options-btn { width: 56px; height: 56px; }
 }
 
-/* the wheel */
+/* the options list (js/wheel.js): drops from the options button */
 .wheel { position: fixed; inset: 0; z-index: 40; }
-.wheel-scrim { position: absolute; inset: 0; background: radial-gradient(circle at 0 0, rgba(4, 18, 40, .28), rgba(4, 18, 40, .08) 60%); opacity: 0; transition: opacity var(--t-std) var(--e-out); }
+.wheel-scrim { position: absolute; inset: 0; background: rgba(4, 18, 40, .16); opacity: 0; transition: opacity var(--t-std) var(--e-out); }
 .wheel.opening .wheel-scrim { opacity: 1; }
 .wheel.closing .wheel-scrim { opacity: 0; transition-timing-function: var(--e-in); }
-.wheel-track { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
-.wheel-track circle { fill: none; stroke: var(--track, rgba(255,255,255,.62)); stroke-width: 1; opacity: 0; transition: opacity var(--t-std); }
-html.night .wheel-track circle { stroke: rgba(160, 210, 255, .22); }
-.wheel.opening .wheel-track circle { opacity: 1; }
-.wheel-ring { position: absolute; inset: 0; touch-action: none; }
+.wheel-ring {
+  position: absolute; top: calc(max(20px, env(safe-area-inset-top)) + 76px); left: 28px;
+  width: min(300px, calc(100vw - 56px)); padding: 8px; border-radius: var(--r);
+  max-height: calc(100dvh - max(20px, env(safe-area-inset-top)) - 100px); overflow: hidden;
+  background: rgba(240, 248, 255, .72); border: 1px solid var(--glass-bd); box-shadow: var(--sh-lg);
+  -webkit-backdrop-filter: blur(22px) saturate(150%); backdrop-filter: blur(22px) saturate(150%);
+  transform-origin: 28px 0; touch-action: none;
+  opacity: 0; scale: .96; translate: 0 -6px;
+  transition: opacity var(--t-quick) var(--e-out), scale var(--t-std) var(--e-out), translate var(--t-std) var(--e-out);
+}
+html.night .wheel-ring { background: rgba(8, 26, 54, .8); }
+.wheel.opening .wheel-ring { opacity: 1; scale: 1; translate: 0 0; }
+.wheel.closing .wheel-ring { opacity: 0; scale: .98; transition-timing-function: var(--e-in); transition-duration: 200ms; }
+.wheel-hl { position: absolute; left: 8px; right: 8px; top: 0; height: 52px; border-radius: 16px; background: var(--acc); transform-origin: 50% 50%; pointer-events: none; }
 .wheel-item {
-  position: absolute; left: 0; top: 0; translate: 0 0; margin: -26px 0 0 -26px; display: flex; align-items: center; gap: 14px;
-  background: none; border: 0; padding: 0; color: var(--ink); cursor: pointer; font: inherit; will-change: translate, opacity;
-  --f: 0;
+  position: relative; display: flex; align-items: center; gap: 14px; width: 100%; height: 52px; padding: 0 14px;
+  background: none; border: 0; border-radius: 16px; color: var(--ink); cursor: pointer; font: inherit; text-align: left;
+  transition: color var(--t-quick);
 }
-.wheel-icon {
-  width: 52px; height: 52px; flex: none; display: grid; place-items: center; border-radius: 50%;
-  background: var(--card); border: 1px solid var(--glass-bd); box-shadow: var(--sh);
-  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
-  scale: calc(0.84 + 0.22 * var(--f)); transition: background var(--t-std), color var(--t-std);
+.wheel-icon { width: 24px; flex: none; display: grid; place-items: center; }
+.wheel-icon .ph { font-size: 22px; }
+.wheel-label { font-size: 17px; font-weight: 500; letter-spacing: -0.015em; white-space: nowrap; }
+.wheel-item[aria-current="true"] { color: var(--on-acc); }
+.wheel-item:focus-visible { outline: 2px solid var(--acc); outline-offset: -2px; }
+.wheel-item[aria-current="true"]:focus-visible { outline-color: var(--on-acc); }
+.wheel-item.chosen { animation: wheelChoose 300ms var(--e-out); }
+@keyframes wheelChoose { 40% { scale: .97; } 100% { scale: 1; } }
+.wheel.opening .wheel-item { animation: wheelIn var(--t-std) var(--e-out) both; animation-delay: calc(var(--n, 0) * 24ms); }
+@keyframes wheelIn { from { opacity: 0; translate: 0 -4px; } }
+@media (prefers-reduced-motion: reduce) { .wheel-scrim, .wheel-ring { transition: none; } .wheel.opening .wheel-item { animation: none; } }
+
+/* layout: top bar, words, then the wave's band. Nothing sits on the wave but the hint. */
+:root { --wave-h: clamp(150px, 30vh, 320px); --bar: calc(max(20px, env(safe-area-inset-top)) + 84px); }
+.options-btn { width: 56px; height: 56px; }
+.options-btn .ph { font-size: 26px; }
+.options-btn.is-open { rotate: 0deg; }
+.stage { padding: var(--bar) 0 0; height: 100dvh; box-sizing: border-box; }
+.here, .here.wide { padding: 8px clamp(24px, 6vw, 96px) 0; }
+.caption, .here.wide .caption {
+  max-height: calc(100dvh - var(--bar) - var(--wave-h) - 24px); overflow-y: auto; overscroll-behavior: contain;
+  scrollbar-width: none; -webkit-mask-image: linear-gradient(180deg, #000 calc(100% - 40px), transparent);
+  mask-image: linear-gradient(180deg, #000 calc(100% - 40px), transparent);
 }
-.wheel-icon .ph { font-size: 26px; }
-.wheel-item[aria-current="true"] .wheel-icon { background: var(--acc); color: var(--on-acc); border-color: transparent; }
-.wheel-label { font-size: calc(17px + 5px * var(--f)); font-weight: 500; letter-spacing: -0.025em; white-space: nowrap; opacity: calc(0.55 + 0.45 * var(--f)); text-shadow: 0 1px 12px rgba(255, 255, 255, .35); }
-html.night .wheel-label { text-shadow: 0 1px 12px rgba(0, 0, 0, .4); }
-.wheel-item:focus-visible { outline: none; }
-.wheel-item:focus-visible .wheel-icon { outline: 2px solid var(--acc); outline-offset: 3px; }
-.wheel-item.chosen .wheel-icon { animation: wheelChoose 420ms var(--e-out); }
-@keyframes wheelChoose { 0% { scale: 1.06; } 30% { scale: .9; } 100% { scale: 1.12; } }
-.wheel.closing .wheel-item { transition: opacity 260ms var(--e-in) !important; opacity: 0 !important; }
-@media (prefers-reduced-motion: reduce) { .wheel-scrim, .wheel-track circle { transition: none; } }
+.caption::-webkit-scrollbar { display: none; }
+.caption .said, .here.wide .caption .said { font-size: clamp(24px, 3.2vmin, 38px); max-width: 30ch; text-wrap: pretty; }
+.here .orb-slot { top: auto; bottom: 0; height: var(--wave-h); }
+.hint { bottom: calc(max(14px, env(safe-area-inset-bottom)) + 14px); color: var(--ink2); }
+.stage ~ .toast, body > .toast { bottom: calc(var(--wave-h) + 8px); }
+.setup { align-items: start; padding: calc(max(20px, env(safe-area-inset-top)) + 8vh) 24px var(--wave-h); overflow-y: auto; }
+.setup-card { margin: 0 auto; }
+.away { padding-top: var(--bar); }
+@media (max-width: 720px) {
+  .top { padding-left: 20px; padding-right: 20px; }
+  .clock { right: 22px; }
+  .wheel-ring { left: 20px; width: calc(100vw - 40px); }
+  .caption .said, .here.wide .caption .said { font-size: 24px; max-width: none; }
+  .sheet .row .btn, .sheet .btn { white-space: nowrap; }
+}
+
+/* rooms bar: one pill per screen, Caden's room filled. Tap one to send Caden there. */
+.dock { padding-bottom: calc(max(14px, env(safe-area-inset-bottom)) + 10px); pointer-events: none; }
+.dock > * { pointer-events: auto; }
+.rooms { padding: 6px; gap: 4px; background: var(--card); border: 1px solid var(--glass-bd); box-shadow: var(--sh); -webkit-backdrop-filter: blur(18px) saturate(140%); backdrop-filter: blur(18px) saturate(140%); }
+.room { font-weight: 500; font-size: 15px; letter-spacing: -0.01em; padding: 9px 16px 9px 10px; color: var(--ink2); cursor: pointer; }
+.room:hover { color: var(--ink); }
+.room .k { width: 28px; height: 28px; background: transparent; }
+.room .k .ph { font-size: 18px; }
+.room.me::after { content: 'Here'; font-size: 11px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--ink3); }
+.room.holder { color: var(--on-acc); }
+.room.holder .k { background: transparent; }
+.room:focus-visible { outline: 2px solid var(--acc); outline-offset: 2px; }
+.puck { top: 6px; height: calc(100% - 12px); background: var(--acc); box-shadow: none; }
+.hint { bottom: auto; top: calc(100dvh - var(--wave-h) + 12px); }
+
+/* dimmer: Caden can darken the screen ("dim the screen") */
+.dimmer { position: fixed; inset: 0; z-index: 90; background: #01040a; opacity: 0; pointer-events: none; transition: opacity var(--t-slow) var(--e-sine); }
+
+/* resting: after a quiet minute the clock takes the middle, everything else steps back */
+.clock { transition: top var(--t-slow) var(--e-out), right var(--t-slow) var(--e-out), translate var(--t-slow) var(--e-out), opacity var(--t-std); }
+.clock b { display: block; transition: font-size var(--t-slow) var(--e-out), letter-spacing var(--t-slow) var(--e-out); }
+.clock span { transition: font-size var(--t-slow) var(--e-out); }
+.here .caption, .hint, .options-btn, .dock { transition: opacity var(--t-std) var(--e-out); }
+html.resting .clock { top: calc((100dvh - var(--wave-h)) / 2); right: 50%; translate: 50% -50%; text-align: center; }
+html.resting .clock b { font-size: clamp(88px, 17vw, 220px); font-weight: 400; letter-spacing: -0.055em; line-height: .95; }
+html.resting .clock span { font-size: clamp(16px, 2vw, 22px); margin-top: 10px; }
+html.resting .here .caption, html.resting .hint { opacity: 0; pointer-events: none; }
+html.resting .options-btn { opacity: .55; }
+html.resting .dock { opacity: .7; }
+@media (prefers-reduced-motion: reduce) { .clock, .clock b, .clock span, .dimmer { transition: none; } }
+@media (max-width: 720px) {
+  .room { padding: 8px 12px 8px 8px; font-size: 14px; }
+  .room.me::after { display: none; }
+}
+html.resting .clock b { white-space: nowrap; font-size: clamp(64px, 15vw, 200px); }
+html.resting .hint { visibility: hidden; }
+.room.holder.me::after { color: color-mix(in oklab, var(--on-acc) 78%, transparent); }
