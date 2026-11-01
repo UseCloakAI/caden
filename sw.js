@@ -1,6 +1,6 @@
 // Caden service worker: the app shell works offline-first; the brain, Cloak,
 // realtime and the face models always go to the network.
-const CACHE = 'caden-v32';
+const CACHE = 'caden-v33';
 const SHELL = ['./', 'index.html', 'manifest.webmanifest', 'css/caden.css', 'icons/icon.svg', 'icons/icon-192.png',
   'fonts/fonts.css', 'fonts/nunito-latin-3.woff2', 'fonts/fredoka-latin-1.woff2', 'icons/ph/style.css', 'icons/ph/Phosphor.woff2',
   'js/app.js', 'js/camera.js', 'js/hands.js', 'js/airnav.js', 'js/config.js', 'js/store.js', 'js/mesh.js', 'js/lan.js', 'js/locate.js', 'js/qr.js', 'js/sfx.js', 'js/wave.js', 'js/wheel.js', 'js/where.js', 'js/clocks.js', 'js/spoken.js', 'js/motion.js', 'js/globe.js', 'fonts/geist-latin-wght-normal.woff2', 'js/vendor/qrcode.js', 'js/faces.js', 'js/voice.js', 'js/brain.js', 'js/orb.js'];
