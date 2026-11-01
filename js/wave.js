@@ -15,14 +15,14 @@
 // One ribbon, living in one band along the bottom of the screen. Amplitudes
 // are fractions of the band, not the screen, so it never climbs into the words.
 const RIBBONS = [
-  { y: 0.5, a1: 0.2, k1: 0.5, w1: 0.22, a2: 0.07, k2: 1.1, w2: 0.31, width: 0.42, kt: 0.62, wt: 0.17, p: 0, strands: 26, alpha: 0.55 },
+  { y: 0.5, a1: 0.2, k1: 0.5, w1: 0.22, a2: 0.07, k2: 1.1, w2: 0.31, width: 0.42, kt: 0.62, wt: 0.17, p: 0, strands: 30, alpha: 0.55 },
 ];
 const TAU = Math.PI * 2;
 // dpr cap, strands drawn, curve samples, sparks, frame-rate cap
 export const QUALITY = {
-  high: { dpr: 2, strands: 26, samples: 110, sparks: 10, fps: 60 },
-  medium: { dpr: 1.25, strands: 18, samples: 80, sparks: 6, fps: 60 },
-  low: { dpr: 1, strands: 12, samples: 56, sparks: 0, fps: 30 },
+  high: { dpr: 2, strands: 30, samples: 140, sparks: 10, fps: 60, glow: true },
+  medium: { dpr: 1.25, strands: 20, samples: 96, sparks: 6, fps: 60 },
+  low: { dpr: 1, strands: 12, samples: 60, sparks: 0, fps: 30 },
 };
 // A first guess for 'auto' from the hardware; frame timing refines it.
 export function guessQuality() {
@@ -39,7 +39,18 @@ const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
 const STRANDS = RIBBONS.map((r) => Array.from({ length: r.strands }, () => ({ delay: rand() * 0.45, dur: 0.9 + rand() * 1.0 })));
 
 // state → [speed, amplitude, brightness]
-const MOOD = { idle: [0.55, 1, 1], listening: [0.9, 1.15, 1.15], thinking: [2.1, 0.9, 1.1], speaking: [1.1, 1.05, 1.2], happy: [0.9, 1.1, 1.35], sleepy: [0.18, 0.7, 0.6] };
+// state → [speed, amplitude, brightness, spread, twist, shimmer, breathe, lean]
+//   spread: how wide the strands open (listening gathers them, attentive)
+//   twist: how fast the bundle turns over; shimmer: a light running along it
+//   breathe: slow swell at rest; lean: rises toward the room (up) or settles
+const MOOD = {
+  idle: [0.55, 1, 1, 1, 1, 0.15, 1, 0],
+  listening: [0.8, 1.1, 1.22, 0.7, 1, 0.3, 0.35, 0.07],
+  thinking: [1.9, 0.85, 1.12, 0.92, 1.8, 1, 0.25, 0.02],
+  speaking: [1, 1.05, 1.25, 1.06, 1.1, 0.35, 0.15, 0.03],
+  happy: [1, 1.22, 1.42, 1.18, 1.45, 0.55, 0.6, 0.05],
+  sleepy: [0.16, 0.6, 0.55, 0.8, 0.7, 0.05, 1.4, -0.05],
+};
 
 export class Wave {
   constructor(canvas) {
@@ -47,6 +58,7 @@ export class Wave {
     this.ctx = canvas.getContext('2d');
     this.state = 'idle';
     this.mood = [...MOOD.idle];
+    this.pulses = []; this.prevLevel = 0; this.clock = 0; // syllable ripples
     this.t = 8; this.energy = 0; this.push = 0; this.flash = 0;
     this.mic = 0; this.voice = 0; this.bright = 0.3; this.pulse = 0; this.shakeT = 0;
     this.dim = 1; this.dimTo = 1;
@@ -54,8 +66,8 @@ export class Wave {
     this.hidden = false;
     this.speech = null; // () => 0..1 real audio level, set by app
     this.samples = 110;
-    this.cy = new Float32Array(111);
-    this.hw = new Float32Array(111);
+    this.cy = new Float32Array(141);
+    this.hw = new Float32Array(141);
     this.mode = 'auto'; this.level = guessQuality(); this.q = QUALITY[this.level];
     this.cost = 0; this.costN = 0; this.onLevel = null;
     this.sparks = Array.from({ length: 10 }, () => ({ x: Math.random(), y: 0.15 + Math.random() * 0.7, v: 0.004 + Math.random() * 0.012, p: Math.random() * TAU, r: 0.6 + Math.random() * 1.6 }));
@@ -143,8 +155,10 @@ export class Wave {
     const night = document.documentElement.classList.contains('night');
     const rgb = night ? '168,212,255' : '255,255,255';
     const target = MOOD[this.state] || MOOD.idle;
-    for (let i = 0; i < 3; i++) this.mood[i] += (target[i] - this.mood[i]) * Math.min(1, dt * 2.5);
-    const [speed, amp, bright] = this.mood;
+    for (let i = 0; i < this.mood.length; i++) this.mood[i] += (target[i] - this.mood[i]) * Math.min(1, dt * 2.2);
+    const [speed, amp0, bright, spread, twist, shimmer, breathe, lean] = this.mood;
+    this.clock += dt;
+    const amp = amp0 * (1 + breathe * 0.1 * Math.sin(this.clock * 0.9));
 
     // voice: the real speech envelope while Caden talks (js/voice.js
     // speechTrack), word pulses for the device voice, the mic while listening
@@ -153,6 +167,15 @@ export class Wave {
     const drive = real ? real.level : Math.max(this.pulse * 0.8, this.state === 'listening' ? this.mic : 0);
     this.voice += (drive - this.voice) * Math.min(1, dt * (real ? 30 : drive > this.voice ? 14 : 5));
     this.bright += ((real ? real.bright : 0.3) - this.bright) * Math.min(1, dt * 10);
+    // a syllable starting (the level jumping up) sends a ripple out from the middle
+    const lvl = real ? real.level : this.pulse;
+    if (lvl - this.prevLevel > 0.12 && (!this.pulses.length || this.pulses[this.pulses.length - 1].age > 0.09) && !reduce()) {
+      this.pulses.push({ age: 0, k: Math.min(1, (lvl - this.prevLevel) * 3) });
+      if (this.pulses.length > 6) this.pulses.shift();
+    }
+    this.prevLevel = lvl;
+    for (const p of this.pulses) p.age += dt;
+    this.pulses = this.pulses.filter((p) => p.age < 1.2);
     this.pulse *= Math.exp(-dt * 7);
     this.mic *= Math.exp(-dt * 6);
     this.energy *= Math.exp(-dt * 2.2);
@@ -180,18 +203,23 @@ export class Wave {
       const v = this.voice;
       const lift = amp;
       const r = { ...base, a1: base.a1 * lift, a2: base.a2 * lift * (1 + v * 0.6), width: base.width * (0.85 + amp * 0.15) };
-      const n = this.samples, ph = this.t + this.push;
+      const n = this.samples, ph = this.t + this.push, B = this.band;
+      const sw = spread * (0.85 + amp * 0.15);
       for (let i = 0; i <= n; i++) {
         const nx = i / n;
         const hump = Math.sin(nx * Math.PI);
-        // speech swells the middle of the wave with its loudness, and rides a
-        // travelling ripple whose grain follows the sound: broad for vowels,
-        // fine for s / f / t
+        // speech swells the middle with its loudness and rides a travelling
+        // ripple whose grain follows the sound (broad vowels, fine s / f / t);
+        // each syllable sends a ripple outward from the middle
         const swell = 1 + v * 0.9 * hump;
         const ripple = Math.sin(nx * (5 + this.bright * 11) * TAU - ph * (5 + this.bright * 5)) * v * 0.05 * hump;
-        const B = this.band;
-        this.cy[i] = this.top + B * r.y + (Math.sin(nx * r.k1 * TAU + ph * r.w1 + r.p) * r.a1 + Math.sin(nx * r.k2 * TAU - ph * r.w2) * r.a2 + ripple) * B * swell + shake;
-        this.hw[i] = B * r.width * swell * Math.sin(nx * r.kt * TAU + ph * r.wt + r.p + 0.9) * (0.35 + 0.65 * hump);
+        let wake = 0;
+        for (const p of this.pulses) {
+          const d = Math.abs(nx - 0.5) - p.age * 0.55;
+          wake += Math.exp(-d * d * 260) * Math.sin(d * 48) * p.k * (1 - p.age / 1.2) * 0.06;
+        }
+        this.cy[i] = this.top + B * (r.y - lean) + (Math.sin(nx * r.k1 * TAU + ph * r.w1 + r.p) * r.a1 + Math.sin(nx * r.k2 * TAU - ph * r.w2) * r.a2 + ripple + wake) * B * swell + shake;
+        this.hw[i] = B * r.width * sw * swell * Math.sin(nx * r.kt * TAU + ph * r.wt * twist + r.p + 0.9) * (0.35 + 0.65 * hump);
       }
       const strandSpan = (s) => {
         // each strand's drawn range during a flight [x0, x1] in 0..1
@@ -212,18 +240,47 @@ export class Wave {
       ctx.fillStyle = `rgba(${rgb},${((night ? 0.05 : 0.12) + this.flash * 0.05 + v * 0.06) * alphaK})`;
       if (started) ctx.fill();
 
-      ctx.lineWidth = 1;
+      // one gradient per frame: a soft light runs along the strands (shimmer)
+      const sh = ((this.clock * (0.18 + shimmer * 0.32)) % 1.6) - 0.3;
+      const grad = ctx.createLinearGradient(0, 0, W, 0);
+      const lo = 0.62 - shimmer * 0.12;
+      const stop = (x, a) => grad.addColorStop(Math.max(0, Math.min(1, x)), `rgba(${rgb},${a})`);
+      stop(0, lo); stop(sh - 0.18, lo); stop(sh, 1); stop(sh + 0.18, lo); stop(1, lo);
+      ctx.strokeStyle = grad;
+      const xs = this.xs && this.xs.length === n + 1 ? this.xs : (this.xs = new Float32Array(n + 1));
+      for (let i = 0; i <= n; i++) xs[i] = (i / n) * W;
+      // a strand as one smooth curve through its points (midpoint quadratics)
+      const curve = (a0, a1, yAt) => {
+        const i0 = Math.max(0, Math.ceil(a0 * n)), i1 = Math.min(n, Math.floor(a1 * n));
+        if (i1 - i0 < 2) return;
+        ctx.beginPath();
+        ctx.moveTo(xs[i0], yAt(i0));
+        for (let i = i0 + 1; i < i1; i++) {
+          const y = yAt(i), yn = yAt(i + 1);
+          ctx.quadraticCurveTo(xs[i], y, (xs[i] + xs[i + 1]) / 2, (y + yn) / 2);
+        }
+        ctx.lineTo(xs[i1], yAt(i1));
+        ctx.stroke();
+      };
       const count = Math.min(base.strands, this.q.strands);
+      const glowK = 1 + this.flash * 0.4 + v * 0.5;
       for (let s = 0; s < count; s++) {
         const u = s / (count - 1) - 0.5, edge = Math.pow(Math.abs(u) * 2, 2);
         const [a0, a1] = strandSpan(s);
         if (a1 <= a0) continue;
-        ctx.strokeStyle = `rgba(${rgb},${Math.min(1, base.alpha * (night ? 1 : 1.3) * (0.22 + 0.78 * edge) * (1 + this.flash * 0.4 + v * 0.5) * bright) * alphaK})`;
-        ctx.beginPath();
-        let st = false;
-        for (let i = 0; i <= n; i++) { const nx = i / n; if (nx < a0 || nx > a1) continue; const x = nx * W, y = this.cy[i] + u * this.hw[i]; st ? ctx.lineTo(x, y) : ctx.moveTo(x, y); st = true; }
-        ctx.stroke();
+        // each strand drifts a little against its neighbours: alive, not ruled lines
+        const drift = 0.05 * (0.4 + edge), sp2 = ph * 0.7 + s * 0.9;
+        ctx.globalAlpha = Math.min(1, base.alpha * (night ? 1 : 1.3) * (0.22 + 0.78 * edge) * glowK * bright) * alphaK;
+        ctx.lineWidth = 1;
+        curve(a0, a1, (i) => this.cy[i] + (u + Math.sin((i / n) * 3 * TAU + sp2) * drift) * this.hw[i]);
       }
+      // high: a soft glowing core gives the bundle depth
+      if (this.q.glow) {
+        ctx.lineWidth = 6;
+        ctx.globalAlpha = (night ? 0.07 : 0.1) * (1 + v * 1.4 + this.flash) * alphaK;
+        curve(f ? strandSpan(0)[0] : 0, f ? strandSpan(0)[1] : 1, (i) => this.cy[i]);
+      }
+      ctx.globalAlpha = 1;
     }
 
     // soften both ends: one shape, not a strip cut by the screen

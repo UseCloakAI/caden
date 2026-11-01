@@ -70,6 +70,18 @@ public class Bridge {
     }
     boolean keepingAlive() { return alive; }
 
+    /** Screen brightness for this window: 0..1, or below 0 for the system's own (dim / lock). */
+    @JavascriptInterface
+    public void setBrightness(float level) {
+        main.post(() -> {
+            if (!(ctx instanceof android.app.Activity)) return;
+            android.view.Window w = ((android.app.Activity) ctx).getWindow();
+            android.view.WindowManager.LayoutParams lp = w.getAttributes();
+            lp.screenBrightness = level < 0 ? android.view.WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE : Math.max(0.01f, Math.min(1f, level));
+            w.setAttributes(lp);
+        });
+    }
+
     /** Caden is flying here: screen on, app to the front, over the lock screen. */
     @JavascriptInterface
     public void wake() { main.post(() -> CadenService.wake(ctx)); }
