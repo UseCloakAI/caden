@@ -767,3 +767,75 @@ html.locked .toast { opacity: 0 !important; }
   .caption .said, .here.wide .caption .said { font-size: clamp(26px, 7.4vw, 34px); }
   .here.long .caption .said { font-size: clamp(21px, 5.6vw, 26px); }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Plainer, more deliberate (no "AI UI" tells): glass only on true overlays
+   (the options list, the Settings sheet), one small radius instead of pills
+   (toggle switches stay round), no glow orbs in the sky, no drop shadows
+   except overlays, flat Settings sections instead of nested cards, text
+   controls instead of badges.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root { --pill: 10px; --r: 18px; --r-sm: 10px; --sh: none; }
+
+/* sky: just the gradient, no radial orbs */
+.sky-day { background: linear-gradient(180deg, #3d92d0 0%, #6fb3e2 42%, #b3d9f0 76%, #ddeefa 100%); }
+.sky-night { background: linear-gradient(180deg, #050d1e 0%, #0b2143 48%, #143f73 84%, #1a4f88 100%); }
+
+/* no frosted glass on small controls */
+.btn, .chip, .icon-btn, .tab[aria-selected="true"], .input, .typebar .input, .badge, .toast, .clock-pill, .rooms, .options-btn, .hint kbd {
+  -webkit-backdrop-filter: none !important; backdrop-filter: none !important; box-shadow: none !important;
+}
+
+/* options button: an icon, not a glass bubble */
+.options-btn { background: transparent; border: 1px solid transparent; width: 48px; height: 48px; border-radius: 12px; }
+.options-btn:hover { background: color-mix(in oklab, var(--ink) 8%, transparent); scale: 1; }
+.options-btn.is-open { background: color-mix(in oklab, var(--ink) 10%, transparent); color: var(--ink); }
+.options-btn .ph { font-size: 28px; }
+
+/* hint: a quiet line of text */
+.hint kbd { background: none; border: 0; padding: 0; color: var(--ink); font-weight: 600; }
+.hint { font-size: 17px; color: var(--ink2); transition: opacity var(--t-std) var(--e-out); }
+html.talking-words .hint { opacity: 0 !important; pointer-events: none; }
+
+/* rooms: plain words, the current room marked by a short rule beneath it */
+.rooms { background: none; border: 0; padding: 0 0 8px; gap: 26px; }
+.room { padding: 8px 2px; font-size: 16px; font-weight: 500; color: var(--ink2); border-radius: 0; }
+.room .k { display: none; }
+.room.holder { color: var(--ink); font-weight: 600; }
+.room.holder.me::after, .room.me::after { color: var(--ink3); }
+.puck { top: auto; bottom: 2px; height: 2px; border-radius: 2px; background: var(--ink); opacity: .85; }
+
+/* toasts: one line of text on a quiet backing, not a pill */
+.toast, html.night .toast { background: color-mix(in oklab, var(--ink) 82%, transparent); color: var(--bg2, #fff); color: #f4f8fc; border: 0; border-radius: 8px; font-weight: 500; font-size: 15px; padding: 9px 14px; }
+html.night .toast { background: rgba(230, 240, 255, .9); color: #0c2740; }
+
+/* timer pills → small tags */
+.clock-pill { background: color-mix(in oklab, var(--ink) 9%, transparent); border: 0; border-radius: 8px; padding: 6px 10px; }
+.clock-pill.ringing { background: var(--acc); }
+
+/* buttons: one style, small radius, no glass */
+.btn { border-radius: 10px; background: color-mix(in oklab, var(--ink) 8%, transparent); border: 0; }
+.btn.primary { background: var(--acc); }
+.btn.ghost { background: transparent; }
+.chip { border-radius: 8px; background: color-mix(in oklab, var(--ink) 7%, transparent); border: 0; }
+.input { border-radius: 10px; background: color-mix(in oklab, var(--ink) 6%, transparent); border: 1px solid var(--line); }
+
+/* Settings: flat sections separated by hairlines, not cards in a card */
+.sheet .card { background: none; border: 0; border-top: 1px solid var(--line); border-radius: 0; box-shadow: none; padding: 20px 2px; -webkit-backdrop-filter: none; backdrop-filter: none; }
+.sheet .card:first-of-type { border-top: 0; }
+.sheet .card h3 { font-size: 13px; font-weight: 600; letter-spacing: .02em; color: var(--ink2); text-transform: none; }
+.tab { border-radius: 8px; }
+
+/* notices: a solid surface, not glass */
+.notice { -webkit-backdrop-filter: none; backdrop-filter: none; background: #f2f7fc; border: 0; border-radius: 14px; }
+html.night .notice { background: #0f2a50; }
+
+/* words: start large, fitWords() shrinks them to fit; never under the wave */
+.caption, .here.wide .caption { overflow-y: auto; }
+.caption .said, .here.wide .caption .said { font-size: clamp(30px, 6.4vmin, 72px); }
+.here.long .caption .said { font-size: clamp(26px, 5vmin, 56px); }
+/* toasts: readable at every quality level and theme */
+body .toast { background: rgba(12, 39, 64, .9) !important; color: #f4f8fc !important; }
+html.night body .toast { background: rgba(232, 241, 252, .94) !important; color: #0c2740 !important; }
+/* words start at the page's left margin, like the menu and the clock, not a centred column */
+.caption, .here.wide .caption { margin: 0; max-width: min(1100px, 100%); }
