@@ -930,9 +930,33 @@ function setWide(on) {
     : [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }],
   { duration: 520, delay: 120, easing: 'cubic-bezier(.2,.8,.3,1)', fill: 'backwards' });
 }
+// Caden's words take the largest size that fits between the top bar and the
+// wave (measured, not guessed from length), down to a floor; past the floor
+// they scroll in place. The "Say Hey Caden" hint steps aside while words show.
+function fitWords() {
+  const here = $('here'), cap = here?.querySelector('.caption'), said = $('capSaid');
+  if (!cap || !said) return;
+  const has = !!said.textContent.trim();
+  document.documentElement.classList.toggle('talking-words', has);
+  said.style.fontSize = '';
+  if (!has) return;
+  const room = here.clientHeight - 8;
+  const max = parseFloat(getComputedStyle(said).fontSize);
+  const min = innerWidth <= 720 ? 19 : 22;
+  let lo = min, hi = max, best = min;
+  for (let i = 0; i < 7; i++) { // binary search on the font size
+    const mid = (lo + hi) / 2;
+    said.style.fontSize = mid + 'px';
+    if (cap.scrollHeight <= room) { best = mid; lo = mid; } else hi = mid;
+  }
+  said.style.fontSize = best.toFixed(1) + 'px';
+}
+addEventListener('resize', () => fitWords());
+queueMicrotask(() => { const el = document.getElementById('capSaid'); if (el) new MutationObserver(() => fitWords()).observe(el, { childList: true, characterData: true, subtree: true }); });
 function fitCaption() {
   const cap = document.querySelector('.here .caption'), said = $('capSaid');
   $('here').classList.toggle('long', said.textContent.length > 150);
+  fitWords();
   if (!wide && (said.textContent.length > 160 || cap.scrollHeight > cap.clientHeight + 4)) setWide(true);
   // follow the newest words unless someone scrolled up to reread
   if (cap.scrollHeight - cap.scrollTop - cap.clientHeight < 80 || !cap.dataset.read) cap.scrollTop = cap.scrollHeight;
@@ -1442,7 +1466,7 @@ async function finishSetup(cam) {
   sfx.play('success');
   if (draftNew) takeOver('first'); // a brand-new home: Caden starts right here
   startSenses();
-  if (!alive().length) setTimeout(() => toast('Tip: add your face in Settings → People.'), 2500);
+  if (!alive().length) setTimeout(() => toast('Add your face in Settings so I can follow you between rooms.'), 2500);
 }
 $('btnSenses').onclick = () => finishSetup(true);
 $('btnMicOnly').onclick = () => finishSetup(false);
