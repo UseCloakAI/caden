@@ -1271,9 +1271,12 @@ const VOICE_HEADERS = { 'Content-Type': 'application/json' };
 let nvVoices = null; // [{name, lang}] from NVIDIA, loaded when Settings → Voice opens
 const langOf = (name) => { const m = /\.([A-Z]{2})-([A-Z]{2})\./.exec(name || ''); return m ? `${m[1].toLowerCase()}-${m[2]}` : 'en-US'; };
 function applyVoice() {
+  warnedVoice = false;
   if (settings.voiceEngine === 'nvidia' && home) {
     const v = settings.nvVoice || NV_VOICE;
-    mouth.useNvidia({ url: VOICE_URL, headers: VOICE_HEADERS, voice: v, lang: nvVoices?.find((x) => x.name === v)?.lang || langOf(v), home: home.id });
+    // one language, from the voice's own name: the voices list's `lang` is every
+    // language the model supports ("en-US,es-US,..."), which NVIDIA rejects
+    mouth.useNvidia({ url: VOICE_URL, headers: VOICE_HEADERS, voice: v, lang: langOf(v), home: home.id });
   } else mouth.useNvidia(null);
 }
 async function loadNvVoices() {
