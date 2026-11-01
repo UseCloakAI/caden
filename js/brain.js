@@ -22,9 +22,9 @@ async function brainCall(body) {
 export const brainSync = (home) => brainCall({ action: 'sync', home });
 export const brainForget = (home, id) => brainCall({ action: 'forget', home, id });
 export const brainClear = (home) => brainCall({ action: 'clear', home });
-export const stripRemember = (s) => String(s || '').split('\n').filter((l) => !/^\s*REMEMBER:/i.test(l)).join('\n').trim().replace(/^\[[^\]\n]{1,40}\]\s*/, '');
+export const stripRemember = (s) => String(s || '').split('\n').filter((l) => !/^\s*(REMEMBER:|DO:|<search\b)/i.test(l)).join('\n').trim().replace(/^\[[^\]\n]{1,40}\]\s*/, '');
 
-export function homeContext({ room, device, people, here }) {
+export function homeContext({ room, device, people, here, place, rooms = [] }) {
   const now = new Date();
   const time = now.toLocaleString(undefined, { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' });
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -32,6 +32,8 @@ export function homeContext({ room, device, people, here }) {
     '## HOME CONTEXT',
     `- You are on the ${device}${room ? ` in the ${room}` : ''}.`,
     `- Local time: ${time} (${tz}).`,
+    place?.place ? `- The home is in or near ${place.place} (${place.how === 'device' ? 'from the device' : 'approximate, from the network'}). Use ${place.units === 'imperial' ? 'Fahrenheit and miles' : 'Celsius and kilometres'}.` : '',
+    rooms.length ? `- Screens in this home right now: ${[...new Set(rooms)].join(', ')}.` : '',
     people.length ? `- People in this home: ${people.join(', ')}.` : '- Nobody has been introduced to you yet.',
     here.length ? `- In front of this device right now: ${here.join(', ')}.` : '',
   ].filter(Boolean).join('\n');
@@ -49,10 +51,10 @@ export function toMessages(turns) {
 // Streams a reply. onSentence(text) per finished sentence, onDelta(full) per token.
 // `home` + `turn` go to the brain (it has the history); `turns` is the local
 // fallback history if the brain can't be reached.
-export async function think({ home, turn, turns, system, signal, onSentence, onDelta }) {
+export async function think({ home, turn, turns, system, where, signal, onSentence, onDelta }) {
   let res = null;
   try {
-    res = await fetch(BRAIN, { method: 'POST', headers: brainHeaders, body: JSON.stringify({ action: 'turn', home, turn, context: system }), signal });
+    res = await fetch(BRAIN, { method: 'POST', headers: brainHeaders, body: JSON.stringify({ action: 'turn', home, turn, context: system, where: where ? { lat: where.lat, lon: where.lon, place: where.place, units: where.units } : null }), signal });
     if (!res.ok || !res.body) res = null;
   } catch (e) { if (signal?.aborted) throw e; res = null; }
   if (!res) {

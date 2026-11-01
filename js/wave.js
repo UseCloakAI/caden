@@ -8,9 +8,10 @@
 //
 // Same interface the orb had (set / level / talk / perk / shake / squish / hop
 // / leave / arrive / look), so the agent logic is unchanged.
+// One ribbon, living in one band along the bottom of the screen. Amplitudes
+// are fractions of the band, not the screen, so it never climbs into the words.
 const RIBBONS = [
-  { y: 0.62, a1: 0.075, k1: 0.55, w1: 0.2, a2: 0.032, k2: 1.35, w2: 0.29, width: 0.17, kt: 0.72, wt: 0.16, p: 0, strands: 22, alpha: 0.5 },
-  { y: 0.68, a1: 0.05, k1: 0.82, w1: 0.15, a2: 0.026, k2: 1.75, w2: 0.25, width: 0.11, kt: 1.08, wt: 0.22, p: 2.2, strands: 15, alpha: 0.34 },
+  { y: 0.5, a1: 0.2, k1: 0.5, w1: 0.22, a2: 0.07, k2: 1.1, w2: 0.31, width: 0.42, kt: 0.62, wt: 0.17, p: 0, strands: 26, alpha: 0.55 },
 ];
 const TAU = Math.PI * 2;
 const ease = (x) => 1 - Math.pow(1 - x, 3);
@@ -38,7 +39,7 @@ export class Wave {
     this.samples = 110;
     this.cy = new Float32Array(this.samples + 1);
     this.hw = new Float32Array(this.samples + 1);
-    this.sparks = Array.from({ length: 18 }, () => ({ x: Math.random(), y: 0.4 + Math.random() * 0.46, v: 0.004 + Math.random() * 0.012, p: Math.random() * TAU, r: 0.6 + Math.random() * 1.6 }));
+    this.sparks = Array.from({ length: 10 }, () => ({ x: Math.random(), y: 0.15 + Math.random() * 0.7, v: 0.004 + Math.random() * 0.012, p: Math.random() * TAU, r: 0.6 + Math.random() * 1.6 }));
     this.resize = this.resize.bind(this);
     addEventListener('resize', this.resize);
     this.resize();
@@ -50,6 +51,9 @@ export class Wave {
   resize() {
     const dpr = Math.min(devicePixelRatio || 1, 1.5);
     this.W = innerWidth; this.H = innerHeight;
+    // the band: bottom ~30% of the screen (CSS --wave-h keeps the layout in step)
+    this.band = Math.max(150, Math.min(320, this.H * 0.3));
+    this.top = this.H - this.band;
     this.el.width = Math.round(this.W * dpr); this.el.height = Math.round(this.H * dpr);
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
@@ -114,17 +118,18 @@ export class Wave {
 
     for (let ri = 0; ri < RIBBONS.length; ri++) {
       const base = RIBBONS[ri];
-      const v = this.voice * (ri === 0 ? 1 : 1.3);
-      const lift = amp * (1 + v * 1.1);
-      const r = { ...base, a1: base.a1 * lift, a2: base.a2 * lift * (1 + v * 0.6), width: base.width * (1 + v * 0.7) * (0.85 + amp * 0.15) };
+      const v = this.voice;
+      const lift = amp;
+      const r = { ...base, a1: base.a1 * lift, a2: base.a2 * lift * (1 + v * 0.6), width: base.width * (0.85 + amp * 0.15) };
       const n = this.samples, ph = this.t + this.push;
       for (let i = 0; i <= n; i++) {
         const nx = i / n;
-        const hump = 0.4 + 0.6 * Math.sin(nx * Math.PI);
-        // speech ripples: a fast travelling wiggle riding on the slow wave
-        const ripple = Math.sin(nx * 9 * TAU - ph * 6) * v * 0.022 * hump;
-        this.cy[i] = H * r.y + Math.sin(nx * r.k1 * TAU + ph * r.w1 + r.p) * H * r.a1 + Math.sin(nx * r.k2 * TAU - ph * r.w2) * H * r.a2 + ripple * H + shake;
-        this.hw[i] = H * r.width * Math.sin(nx * r.kt * TAU + ph * r.wt + r.p) * (0.55 + 0.45 * Math.sin(nx * Math.PI));
+        const hump = Math.sin(nx * Math.PI);
+        // speech swells the middle of the wave, one breath, no jitter
+        const swell = 1 + v * 0.9 * hump;
+        const B = this.band;
+        this.cy[i] = this.top + B * r.y + (Math.sin(nx * r.k1 * TAU + ph * r.w1 + r.p) * r.a1 + Math.sin(nx * r.k2 * TAU - ph * r.w2) * r.a2) * B * swell + shake;
+        this.hw[i] = B * r.width * swell * Math.sin(nx * r.kt * TAU + ph * r.wt + r.p + 0.9) * (0.35 + 0.65 * hump);
       }
       const strandSpan = (s) => {
         // each strand's drawn range during a flight [x0, x1] in 0..1
@@ -159,6 +164,14 @@ export class Wave {
       }
     }
 
+    // soften both ends: one shape, not a strip cut by the screen
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-in';
+    const g = ctx.createLinearGradient(0, 0, W, 0);
+    g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(0.14, 'rgba(0,0,0,1)'); g.addColorStop(0.86, 'rgba(0,0,0,1)'); g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g; ctx.fillRect(0, this.top - this.band, W, this.band * 2.2);
+    ctx.restore();
+
     const fast = this.state === 'thinking' ? 4 : 1;
     for (const p of this.sparks) {
       p.x += (p.v * fast * (still ? 0 : 1) + this.energy * 0.01) * dt;
@@ -168,7 +181,7 @@ export class Wave {
       const a = (0.25 + 0.55 * (0.5 + 0.5 * Math.sin(this.t * (1.7 * fast) + p.p))) * (night ? 0.8 : 0.9) * alphaK;
       ctx.fillStyle = `rgba(${rgb},${a})`;
       ctx.beginPath();
-      ctx.arc(p.x * W, p.y * H + Math.sin(this.t * 0.6 + p.p) * 6, p.r * (1 + this.voice), 0, TAU);
+      ctx.arc(p.x * W, this.top + p.y * this.band + Math.sin(this.t * 0.6 + p.p) * 6, p.r * (1 + this.voice), 0, TAU);
       ctx.fill();
     }
   }

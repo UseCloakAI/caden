@@ -312,6 +312,7 @@ export class Mouth extends EventTarget {
     a.onerror = done;
     a.src = url;
     a.playbackRate = this.rate;
+    a.volume = this.volume ?? 1;
     await a.play();
     this._emit('start');
     clearTimeout(this.watch);
@@ -327,6 +328,7 @@ export class Mouth extends EventTarget {
     if (v) { u.voice = v; u.lang = v.lang; }
     u.rate = this.rate;
     u.pitch = 1.05;
+    u.volume = this.volume ?? 1;
     u.onboundary = () => this._emit('word');
     u.onend = u.onerror = () => this._done(id);
     // Chrome sometimes never fires onend; a generous watchdog keeps the queue moving.
