@@ -23,6 +23,7 @@ import { Meter, score, pickLoudest } from './locate.js';
 import { sfx } from './sfx.js';
 import { where } from './where.js';
 import { still } from './camera.js';
+import { watchMotion } from './motion.js';
 import { parseDuration, parseAlarm, sayLeft, showLeft } from './clocks.js';
 
 const $ = (id) => document.getElementById(id);
@@ -236,6 +237,7 @@ async function leaveHere(to, reason) {
 }
 
 async function arriveHere(from, reason, person, line = null) {
+  unlockScreen('quiet');
   moving = true;
   setPhase('idle');
   renderView();
@@ -313,6 +315,8 @@ function renderOrb() {
 let followUpOpen = false, endConversation = false;
 function listenNow() {
   followUpOpen = false;
+  unlockScreen('quiet');
+  forceRest = false;
   if (iHold() && !(mode === 'command' && now() < modeUntil)) sfx.play('wake');
   if (iHold() && !(mode === 'command' && now() < modeUntil)) orb?.perk(); // heard you
   mode = 'command';
@@ -546,6 +550,7 @@ const ASKED = {
   dim: /\b(dim|dark|darker|bright|brighter|brightness|screen|light)\b/i,
   volume: /\b(volume|loud|louder|quiet|quieter|soft|softer|turn (it |yourself )?(up|down)|mute)\b/i,
   clock: /\b(clock|rest|sleep|idle|screensaver|that's all|good ?night)\b/i,
+  lock: /\b(lock|sleep|dark|night|bed|screen off|turn (the )?screen off|good ?night|blank)\b/i,
 };
 const MAX_STEPS = 4;
 let agentSteps = 0;
@@ -597,6 +602,7 @@ function runActions(full, said = '') {
     else if (verb === 'bright' || verb === 'undim') setDim(0);
     else if (verb === 'volume') { setVolume(parseFloat(arg)); notes.push(`Volume is ${settings.volume}.`); }
     else if (verb === 'clock') clockSoon = true;
+    else if (verb === 'lock') { later(lockScreen); notes.push('Screen locked: it wakes when someone moves in front of it.'); }
     else if (verb === 'announce') {
       const msg = (parts[1] || '').replace(/\s*\(.*\)\s*$/, '');
       const w = resolveWhere(arg);
@@ -681,7 +687,7 @@ function setDim(v) {
 function applyDim() {
   const el = $('dimmer');
   if (el) el.style.opacity = String((settings.dim / 100) * 0.9);
-  try { window.CadenNative?.setBrightness?.(1 - settings.dim / 100); } catch { /* old APK */ }
+  if (!locked) { try { window.CadenNative?.setBrightness?.(settings.dim ? 1 - settings.dim / 100 : -1); } catch { /* old APK */ } }
 }
 function setVolume(v) {
   if (!isFinite(v)) return;
@@ -696,12 +702,45 @@ function applyVolume() {
 
 // ── resting: after a quiet minute the clock takes the middle of the screen ──
 let clockSoon = false;
+// ── lock: the screen goes almost dark, a faint clock stays; motion in front of
+// the camera, a touch, a key or the wake word brings it back ─────────────────
+let locked = false, stopMotion = null, forceRest = false;
+function lockScreen() {
+  if (locked) return;
+  locked = true;
+  wheel?.close(true);
+  document.documentElement.classList.add('locked', 'resting');
+  placeClock(true);
+  try { window.CadenNative?.setBrightness?.(0.02); } catch { /* old APK */ }
+  setTimeout(() => { if (locked) stopMotion = watchMotion(() => unlockScreen('motion')); }, 1500); // ignore the hand that asked
+}
+function unlockScreen(why = '') {
+  if (!locked) return;
+  locked = false;
+  stopMotion?.(); stopMotion = null;
+  document.documentElement.classList.remove('locked');
+  activity = now(); forceRest = false;
+  applyDim();
+  if (why !== 'quiet') sfx.play('enter');
+  setTimeout(() => { document.documentElement.classList.toggle('resting', isResting()); placeClock(true); }, 30);
+}
+// tap the clock: rest now, or come back
+function toggleRest() {
+  if (locked) { unlockScreen(); return; }
+  if (document.documentElement.classList.contains('resting')) { forceRest = false; stir(); sfx.play('back'); }
+  else { forceRest = true; document.documentElement.classList.add('resting'); placeClock(true); sfx.play('enter'); }
+}
+
 function isResting() {
+  if (locked || forceRest) return true;
   if (clockSoon && phase === 'idle' && !mouth.speaking) return true;
   return now() - activity > 45000 && phase === 'idle' && !mouth.speaking && !streaming
     && !(mode === 'command' && now() < modeUntil) && !wheel?.open && !$('sheetHost').firstElementChild;
 }
-function stir() {
+function stir(e) {
+  if (e?.target?.closest?.('#clock')) return; // the clock's own tap toggles resting
+  if (locked) { unlockScreen(); e?.preventDefault?.(); e?.stopPropagation?.(); return; }
+  forceRest = false;
   activity = now(); clockSoon = false;
   if (document.documentElement.classList.contains('resting')) { document.documentElement.classList.remove('resting'); placeClock(); }
 }
@@ -715,6 +754,7 @@ function announce(text, ids) {
   }
 }
 function hearAnnouncement(text, from) {
+  unlockScreen('quiet');
   if (document.hidden) { try { NativeApp()?.wake?.(); } catch { /* */ } }
   sfx.unlock();
   sfx.play('announce', { force: true, alert: true });
@@ -761,6 +801,7 @@ function onClockMessage(data) {
 }
 function ring(c) {
   if (ringing.has(c.id)) return;
+  unlockScreen('quiet');
   if (document.hidden) { try { NativeApp()?.wake?.(); } catch { /* */ } }
   sfx.unlock();
   const sound = c.kind === 'alarm' ? 'alarm' : 'ring';
@@ -1455,6 +1496,7 @@ function buildWheel() {
     { id: 'people', icon: 'users-three', label: 'People', run: () => openSheet('people') },
     { id: 'voice', icon: 'waveform', label: 'Voice', run: () => openSheet('voice') },
     { id: 'turns', icon: 'chats-circle', label: 'Turns', run: () => openSheet('turns') },
+    { id: 'lock', icon: 'lock-simple', label: 'Lock screen', run: () => lockScreen() },
     { id: 'display', icon: 'hand-pointing', label: 'Touch-free', run: () => { settings.display = !settings.display; saveSettings(); applyDisplay(); toast(settings.display ? 'Touch-free on. Point with your hand.' : 'Touch-free off.'); } },
     { id: 'full', icon: 'corners-out', label: 'Full screen', run: () => toggleFull() },
   ];
@@ -1869,7 +1911,8 @@ function boot() {
   document.addEventListener('pointerdown', giveVoiceMeter, { once: true });
   mouth.rate = settings.rate;
   applyVolume(); applyDim();
-  for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, stir, { capture: true, passive: true });
+  for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, stir, { capture: true });
+  $('clock').addEventListener('click', (e) => { e.stopPropagation(); toggleRest(); });
   addEventListener('keydown', (e) => { if (e.key === 'Escape' && ringing.size) for (const id of [...ringing.keys()]) stopClock(id); });
   where().catch(() => {});
   mouth.voiceName = settings.voice;
@@ -1879,7 +1922,7 @@ function boot() {
   stopEnroll();
   air = new AirNav();
   air.onPress = () => sfx.play('click');
-  if (/[?&]debug\b/.test(location.search)) window.__caden = { wheel: () => wheel, setWide: (v) => setWide(v), appendSaid: (t) => appendSaid(t), hands, air, settings, mesh, meter, sfx, onHeard, holder: () => holder, lastLocate: () => lastLocate, runActions: (f, t) => runActions(f, t), mouth, wave: () => orb, clocks: () => clocks, ringing: () => ringing, announce: (t, ids) => announce(t, ids), resolveWhere: (t) => resolveWhere(t), runTurn: (t, w, s, i) => runTurn(t, w, s, i), rest: () => { activity = 0; } }; // test hook
+  if (/[?&]debug\b/.test(location.search)) window.__caden = { wheel: () => wheel, setWide: (v) => setWide(v), appendSaid: (t) => appendSaid(t), hands, air, settings, mesh, meter, sfx, onHeard, holder: () => holder, lastLocate: () => lastLocate, runActions: (f, t) => runActions(f, t), mouth, wave: () => orb, clocks: () => clocks, ringing: () => ringing, announce: (t, ids) => announce(t, ids), resolveWhere: (t) => resolveWhere(t), runTurn: (t, w, s, i) => runTurn(t, w, s, i), lock: () => lockScreen(), unlock: () => unlockScreen(), locked: () => locked, toggleRest: () => toggleRest(), rest: () => { activity = 0; } }; // test hook
   // #display boots straight into touch-free mode (kiosk screens).
   if (/(^|[#&])display\b/.test(location.hash)) { settings.display = true; saveSettings(); }
   applyDisplay();

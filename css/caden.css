@@ -718,3 +718,19 @@ html.resting .clocks { top: var(--clocks-top); }
    big clock never sits on "Caden is in the ..." (a touch brings it back) */
 .away { transition: opacity var(--t-std) var(--e-out); }
 html.resting .away { opacity: 0; pointer-events: none; }
+
+/* tap the clock to rest or come back */
+.clock b, .clock span { pointer-events: auto; cursor: pointer; }
+
+/* locked: almost dark, a faint clock in the middle; motion, a touch or the wake word wakes it */
+html.locked .dimmer { opacity: .9 !important; z-index: 90; transition: opacity var(--t-slow) var(--e-sine); }
+html.locked .clock { z-index: 91; }
+html.locked .clock b, html.locked .clock span { opacity: .34; color: #cfe3ff; }
+html.locked .clocks, html.locked .top, html.locked .dock, html.locked .hint, html.locked .wheel { opacity: 0; pointer-events: none; }
+html.locked .wave { opacity: .25; transition: opacity var(--t-slow) var(--e-sine); }
+/* the header only catches taps on its button, so the clock beneath is tappable */
+.top { pointer-events: none; }
+.top > * { pointer-events: auto; }
+.clock { z-index: 6; }
+html.locked #stage { z-index: 92; } /* #stage is fixed, so it is its own stacking layer: lift the whole layer over the dimmer (only the clock shows) */
+html.locked .toast { opacity: 0 !important; }

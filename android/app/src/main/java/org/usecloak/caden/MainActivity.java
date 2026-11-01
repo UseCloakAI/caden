@@ -50,10 +50,11 @@ public class MainActivity extends Activity {
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         showOverLock();
+        immersive();
         CadenService.channels(this);
 
         web = new WebView(this);
-        web.setBackgroundColor(Color.parseColor("#FFF7EE"));
+        web.setBackgroundColor(Color.parseColor("#0A2245")); // under the sky, never white
         setContentView(web);
 
         WebSettings s = web.getSettings();
@@ -103,6 +104,37 @@ public class MainActivity extends Activity {
         askPerms();
         String deep = getIntent() != null && getIntent().getData() != null ? getIntent().getData().getFragment() : null;
         web.loadUrl(ORIGIN + "index.html" + (deep != null ? "#" + deep : ""));
+    }
+
+    // Full screen, edge to edge: no status or navigation bar (a swipe from the
+    // edge shows them for a moment), drawn into the camera cutout too, so the
+    // sky fills the whole glass with no light bands.
+    @SuppressWarnings("deprecation")
+    void immersive() {
+        android.view.Window w = getWindow();
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+            WindowManager.LayoutParams lp = w.getAttributes();
+            lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            w.setAttributes(lp);
+        }
+        if (android.os.Build.VERSION.SDK_INT >= 30) {
+            w.setDecorFitsSystemWindows(false);
+            android.view.WindowInsetsController c = w.getInsetsController();
+            if (c != null) {
+                c.hide(android.view.WindowInsets.Type.statusBars() | android.view.WindowInsets.Type.navigationBars());
+                c.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+            }
+        } else {
+            w.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION);
+        }
+    }
+
+    @Override
+    public void onWindowFocusChanged(boolean focus) {
+        super.onWindowFocusChanged(focus);
+        if (focus) immersive(); // bars come back after dialogs and permission prompts
     }
 
     // Caden can arrive while this phone is locked: show over the lock screen and
@@ -197,7 +229,7 @@ public class MainActivity extends Activity {
         CadenService.arrived(this);
         ticker.removeCallbacks(recheck);
         ticker.postDelayed(recheck, 4000); // check soon after coming back, then every 30 min
-        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
+        immersive();
     }
 
     @Override
