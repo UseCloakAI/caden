@@ -18,6 +18,7 @@ import { Orb, E } from './orb.js';
 import { Hands } from './hands.js';
 import { AirNav } from './airnav.js';
 import { Meter, score, pickLoudest } from './locate.js';
+import { sfx } from './sfx.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -37,7 +38,7 @@ let home = store.get('home');              // { code, id }
 let people = store.get('people', []);      // [{id,name,color,d:[...],updated,deleted?}]
 let turns = [];
 let memories = [];
-const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false, voiceEngine: 'nvidia', nvVoice: NV_VOICE, locate: true, voiceCal: null }, store.get('settings', {}));
+const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false, voiceEngine: 'nvidia', nvVoice: NV_VOICE, locate: true, voiceCal: null, sfx: true, sfxVol: 0.6 }, store.get('settings', {}));
 const saveSettings = () => store.set('settings', settings);
 
 const devices = new Map();                 // id -> {id,name,room,kind,last,holder,epoch,sees,phase}
@@ -68,7 +69,8 @@ const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 const alive = () => people.filter((p) => !p.deleted);
 const iHold = () => holder.id === me.id;
 
-function toast(text) {
+function toast(text, sound = 'pop') {
+  if (sound) sfx.play(sound);
   const t = document.createElement('div');
   t.className = 'toast';
   t.textContent = text;
@@ -216,7 +218,11 @@ async function leaveHere(to, reason) {
   setPhase('idle');
   mode = 'wait';
   renderDock();
-  if (reason !== 'quiet' && !$('here').hidden) await orb.leave(direction(me.id, to));
+  if (reason !== 'quiet' && !$('here').hidden) {
+    const dir = direction(me.id, to);
+    sfx.play('whooshOut', { pan: dir * 0.5 }); // off toward the side it flies
+    await orb.leave(dir);
+  }
   moving = false;
   renderView(true);
   $('capYou').innerHTML = '';
@@ -228,7 +234,10 @@ async function arriveHere(from, reason, person) {
   setPhase('idle');
   renderView();
   renderDock();
-  await orb.arrive(from ? direction(from, me.id) : 1);
+  const dir = from ? direction(from, me.id) : 1;
+  sfx.play('whooshIn', { pan: -dir * 0.4 });       // in from the side it came from
+  sfx.play('land', { delay: 0.83 });                // the squash at 74% of the 1150 ms swoop
+  await orb.arrive(dir);
   moving = false;
   activity = now();
   const p = person ? alive().find((x) => x.id === person.id) || person : (freshSight() ? lastSight.person : null);
@@ -241,6 +250,7 @@ async function arriveHere(from, reason, person) {
   } else if (p && reason === 'face' && now() - (greeted.get(p.id) || 0) > 5 * 60 * 1000) {
     greeted.set(p.id, now());
     const hi = [`Hi ${p.name}!`, `Hey ${p.name}, I'm here.`, `Oh hi, ${p.name}.`][Math.floor(Math.random() * 3)];
+    sfx.play('sparkle');
     showSaid(hi);
     say(hi);
   }
@@ -266,6 +276,7 @@ function renderOrb() {
 
 // ── hearing ──────────────────────────────────────────────────────────────────
 function listenNow() {
+  if (iHold() && !(mode === 'command' && now() < modeUntil)) sfx.play('wake');
   if (iHold() && !(mode === 'command' && now() < modeUntil)) orb?.perk(); // heard you
   mode = 'command';
   modeUntil = now() + 7000;
@@ -364,7 +375,7 @@ function calibrate() {
     settings.voiceCal = { db: Math.round(p * 10) / 10, scale: meter.scale, at: Date.now() };
     saveSettings();
     orb?.hop();
-    toast('Got it. This is how you sound up close.');
+    toast('Got it. This is how you sound up close.', 'success');
     renderSheet();
   }, 400);
 }
@@ -403,6 +414,7 @@ async function runTurn(text, who) {
   $('capYou').innerHTML = who ? `<b>${esc(who.name)}</b>“${esc(text)}”` : `“${esc(text)}”`;
   $('capSaid').textContent = '';
   setPhase('thinking');
+  sfx.play('send');
 
   const ctrl = new AbortController();
   turnCtrl = ctrl;
@@ -426,6 +438,7 @@ async function runTurn(text, who) {
     if (ctrl.signal.aborted) return;
     turn.reply = "Sorry, I couldn't reach my brain just now. Try again in a moment.";
     orb.shake();
+    sfx.play('error');
     appendSaid(turn.reply);
     say(turn.reply);
     console.warn('[caden] turn failed', e);
@@ -657,6 +670,7 @@ hands.addEventListener('gesture', (e) => {
     else if (iHold() && (mouth.speaking || phase === 'thinking')) orbTap();
     else if (mode === 'command') { mode = 'wait'; if (iHold()) setPhase('idle'); }
   } else if (name === 'swipe') {
+    sfx.play('swish', { pan: dir * 0.5 });
     air?.swipe(dir);
   }
 });
@@ -843,7 +857,7 @@ $('btnScan').onclick = async () => {
     await qrScan.start((code) => {
       stopScan();
       $('joinCode').value = code;
-      toast(`Found ${code}`);
+      toast(`Found ${code}`, 'success');
       draft = code;
       draftNew = false;
       showStep('device');
@@ -869,6 +883,7 @@ async function finishSetup(cam) {
   settings.cam = cam;
   saveSettings();
   await enterHome(draft);
+  sfx.play('success');
   if (draftNew) takeOver('first'); // a brand-new home: Caden starts right here
   startSenses();
   if (!alive().length) setTimeout(() => toast('Tip: add your face in Settings → People.'), 2500);
@@ -956,8 +971,9 @@ if (isNative) {
 // ── settings sheet ───────────────────────────────────────────────────────────
 let sheetTab = null;
 let qrUntil = 0, qrT = null; // join QR is shown on request, then hides itself
-function openSheet(tab) { sheetTab = tab; renderSheet(); }
+function openSheet(tab) { sfx.play('sheetOpen'); sheetTab = tab; renderSheet(); }
 function closeSheet() {
+  if (sheetTab) sfx.play('sheetClose');
   sheetTab = null;
   stopEnroll();
   const host = $('sheetHost');
@@ -1081,6 +1097,11 @@ function panel(tab) {
           return `<span class="${id === lastLocate.win ? 'win' : ''}">${roomIcon(d?.room)}${esc(d?.room || d?.name || 'Device')} <b>${sc >= 0 ? '+' : ''}${sc.toFixed(1)} dB</b></span>`;
         }).join('')}</div>` : ''}
       </div>
+      <div class="card"><h3>Sounds</h3>
+        ${toggleRow('sfx', 'Sound effects', 'Little chimes when I hear you, fly between rooms, or finish something.')}
+        <div class="field"><label for="sSfxVol">Volume</label><input type="range" id="sSfxVol" min="0" max="1" step="0.05" value="${settings.sfxVol}"></div>
+        <button class="btn small" data-act="sfxTest"><i class="ph ph-speaker-high" aria-hidden="true"></i>Play a sample</button>
+      </div>
       <div class="card"><h3>My voice</h3>
         <div class="chips" role="radiogroup" aria-label="Which voice">
           <button class="chip" type="button" role="radio" data-act="engine" data-v="nvidia" aria-pressed="${settings.voiceEngine === 'nvidia'}" aria-checked="${settings.voiceEngine === 'nvidia'}"><i class="ph ph-waveform" aria-hidden="true"></i>NVIDIA Magpie</button>
@@ -1106,6 +1127,8 @@ function panel(tab) {
 function bindPanel(host) {
   host.querySelectorAll('[data-set]').forEach((el) => (el.onchange = () => {
     settings[el.dataset.set] = el.checked;
+    sfx.play(el.checked ? 'toggleOn' : 'toggleOff');
+    if (el.dataset.set === 'sfx') sfx.enabled = el.checked;
     saveSettings();
     if (el.dataset.set === 'typing') applyTyping();
     if (el.dataset.set === 'mic' || el.dataset.set === 'cam' || el.dataset.set === 'locate') startSenses();
@@ -1116,6 +1139,8 @@ function bindPanel(host) {
   if (eng) eng.onchange = () => { settings.engine = eng.value; saveSettings(); if (settings.mic) { ears.stop(); ears.start(settings.engine); } };
   const qrBox = host.querySelector('#qrShow');
   if (qrBox && !qrBox.hidden) qrSvg(qrBox.dataset.link).then((svg) => { qrBox.innerHTML = svg; }).catch(() => { qrBox.textContent = 'Couldn\'t draw the QR code. Use Copy link instead.'; });
+  const vol = host.querySelector('#sSfxVol');
+  if (vol) vol.oninput = () => { settings.sfxVol = Number(vol.value); sfx.setVolume(settings.sfxVol); saveSettings(); };
   const nv = host.querySelector('#sNvVoice');
   if (nv) nv.onchange = () => { settings.nvVoice = nv.value; saveSettings(); applyVoice(); };
   if (host.querySelector('#nvVoiceNote')) loadNvVoices().then(() => { if (sheetTab === 'voice') renderSheet(); })
@@ -1142,6 +1167,7 @@ async function act(a, el) {
     settings.wake = w.length ? w : DEFAULT_WAKE;
     saveSettings(); renderSheet(); toast('Wake words saved');
   }
+  if (a === 'sfxTest') { sfx.unlock(); sfx.play('wake'); sfx.play('whooshIn', { delay: 0.6 }); sfx.play('land', { delay: 1.43 }); sfx.play('success', { delay: 2.2 }); }
   if (a === 'checkUpdate') { N()?.checkUpdate(); toast('Checking for updates…'); setTimeout(() => { refreshAppInfo(); if (sheetTab === 'home') renderSheet(); }, 5000); }
   if (a === 'installUpdate') { N()?.installUpdate(); toast('Downloading the update…'); }
   if (a === 'qr') {
@@ -1189,7 +1215,7 @@ async function enroll(existingId) {
     store.set('people', people);
     faces.setPeople(alive());
     sharePeople();
-    toast(`Nice to meet you, ${name}!`);
+    toast(`Nice to meet you, ${name}!`, 'success');
     if (iHold()) { orb.hop(); say(`Nice to meet you, ${name}.`); }
     if (!settings.cam) { settings.cam = true; saveSettings(); }
   } catch (e) {
@@ -1212,7 +1238,7 @@ setInterval(() => {
   tickClock();
   if (mode === 'command' && now() > modeUntil) {
     mode = 'wait';
-    if (iHold() && phase === 'listening') setPhase('idle');
+    if (iHold() && phase === 'listening') { setPhase('idle'); sfx.play('cancel'); }
   }
   renderOrb();
 }, 1000);
@@ -1227,7 +1253,11 @@ function boot() {
   setupOrb = new Orb($('setupOrb'));
   $('orb').addEventListener('click', orbTap);
   $('orb').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); orbTap(); } });
-  document.addEventListener('pointerdown', () => mouth.unlock(), { once: true });
+  document.addEventListener('pointerdown', () => { mouth.unlock(); sfx.unlock(); }, { once: true });
+  document.addEventListener('keydown', () => sfx.unlock(), { once: true });
+  sfx.enabled = settings.sfx;
+  sfx.setVolume(settings.sfxVol);
+  sfx.unlock(); // allowed in the app and on kiosks; elsewhere it waits for the first tap
   mouth.rate = settings.rate;
   mouth.voiceName = settings.voice;
   applyVoice();
@@ -1235,7 +1265,8 @@ function boot() {
   tickClock();
   stopEnroll();
   air = new AirNav();
-  if (/[?&]debug\b/.test(location.search)) window.__caden = { hands, air, settings, mesh, meter, onHeard, holder: () => holder, lastLocate: () => lastLocate }; // test hook
+  air.onPress = () => sfx.play('click');
+  if (/[?&]debug\b/.test(location.search)) window.__caden = { hands, air, settings, mesh, meter, sfx, onHeard, holder: () => holder, lastLocate: () => lastLocate }; // test hook
   // #display boots straight into touch-free mode (kiosk screens).
   if (/(^|[#&])display\b/.test(location.hash)) { settings.display = true; saveSettings(); }
   applyDisplay();

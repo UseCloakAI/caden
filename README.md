@@ -55,6 +55,10 @@ The QR is the home's encryption key, so it stays hidden until asked for and hide
 
 Caden speaks with **NVIDIA Magpie TTS Multilingual** through the Cloak API (`POST https://api.usecloak.org/v1/speech`, Cloak's NVIDIA key pool; the worker talks gRPC to Riva since it has no REST API), prefetching each sentence while the previous one plays. If NVIDIA is unreachable it falls back to the device's own voice, sentence by sentence. Settings → Voice switches between the two and picks the Magpie voice." No key in Caden: it uses Cloak's. (NVIDIA deprecated Magpie TTS Flow; its replacement, Zeroshot, needs access approval, so voice cloning isn't used.)
 
+### Sounds
+
+`js/sfx.js` synthesizes every effect with the Web Audio API (no audio files): FM bells in a warm D-major pentatonic, filtered-noise whooshes, soft plucks and a landing thump, rendered once to 48 kHz stereo buffers with a shared convolution reverb (UI ticks stay dry), normalized and click-free, then played through a stereo panner and a limiter. Flights pan the way Caden flies; the landing is timed to the squash. Settings → Voice → Sounds turns them off or sets the volume.
+
 ### Finding you by voice
 
 Every screen keeps a loudness meter (auto gain control off). When several screens hear "Hey Caden", each scores how loud it was against its own **calibration** (Settings → Voice → Calibrate: stand next to it and say "Hey Caden"), shares the score over the mesh, and the loudest takes Caden and the command after 700 ms; the rest stand down. Calibration cancels out different mics, so a hot mic across the room doesn't beat a quiet one next to you. Settings shows the last decision with each screen's score.
@@ -88,6 +92,7 @@ js/app.js             the agent: holder election, handoffs, turns, voice loop, s
 js/mesh.js            encrypted messaging: LAN links first, then BroadcastChannel / Realtime relay
 js/lan.js             WebRTC data channels between devices, path + ping
 js/locate.js          loudness meter + nearest-screen scoring for "Hey Caden"
+js/sfx.js             synthesized sound effects (Web Audio, offline-rendered, no files)
 js/qr.js              join QR: draw (qrcode-generator) and scan (BarcodeDetector / jsQR)
 js/vendor/            qrcode-generator (MIT), jsQR (Apache-2.0)
 js/faces.js           face detection / recognition / enrollment
