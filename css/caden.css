@@ -713,3 +713,8 @@ html.night[data-quality="low"] .notice { background: rgba(10, 30, 60, .97); }
 html.resting .clocks { top: var(--clocks-top); }
 .clocks.row { left: 20px; right: 20px; translate: none; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
 @media (max-width: 720px) { .clocks:not(.row) { top: var(--clocks-top, calc(max(20px, env(safe-area-inset-top)) + 62px)); } }
+
+/* resting on a screen Caden isn't on: the away card steps back too, so the
+   big clock never sits on "Caden is in the ..." (a touch brings it back) */
+.away { transition: opacity var(--t-std) var(--e-out); }
+html.resting .away { opacity: 0; pointer-events: none; }
