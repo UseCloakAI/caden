@@ -41,7 +41,7 @@ let home = store.get('home');              // { code, id }
 let people = store.get('people', []);      // [{id,name,color,d:[...],updated,deleted?}]
 let turns = [];
 let memories = [];
-const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false, voiceEngine: 'nvidia', nvVoice: NV_VOICE, locate: true, voiceCal: null, sfx: true, sfxVol: 0.6, volume: 100, dim: 0 }, store.get('settings', {}));
+const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false, voiceEngine: 'nvidia', nvVoice: NV_VOICE, locate: true, voiceCal: null, sfx: true, sfxVol: 0.6, volume: 100, dim: 0, wakeHere: true }, store.get('settings', {}));
 const saveSettings = () => store.set('settings', settings);
 
 const devices = new Map();                 // id -> {id,name,room,kind,last,holder,epoch,sees,phase}
@@ -238,6 +238,7 @@ async function arriveHere(from, reason, person) {
   setPhase('idle');
   renderView();
   renderDock();
+  await wakeForArrival();
   const dir = from ? direction(from, me.id) : 1;
   sfx.play('whooshIn', { pan: -dir * 0.4 });       // in from the side it came from
   sfx.play('land', { delay: 0.83 });                // the squash at 74% of the 1150 ms swoop
@@ -259,6 +260,27 @@ async function arriveHere(from, reason, person) {
     say(hi);
   }
   beat();
+}
+
+// ── waking an Android screen when Caden flies to it (CadenService.java) ─────
+const NativeApp = () => window.CadenNative || null;
+function applyKeepAlive() {
+  try { NativeApp()?.keepAlive?.(!!(home && settings.wakeHere)); } catch { /* old APK */ }
+}
+// If this screen is asleep or in the background, wake it and wait until the
+// page is actually visible, so the whole arrival plays where someone can see it.
+async function wakeForArrival() {
+  if (!document.hidden || !settings.wakeHere || !NativeApp()?.wake) return;
+  try { NativeApp().wake(); } catch { return; }
+  await new Promise((res) => {
+    const done = () => { document.removeEventListener('visibilitychange', check); clearTimeout(t); setTimeout(res, 350); };
+    const check = () => { if (!document.hidden) done(); };
+    const t = setTimeout(done, 6000);
+    document.addEventListener('visibilitychange', check);
+  });
+}
+function wakePermissions() {
+  try { return JSON.parse(NativeApp()?.wakeStatus?.() || 'null'); } catch { return null; }
 }
 
 // ── phases & the orb ─────────────────────────────────────────────────────────
@@ -899,7 +921,12 @@ async function requestWake() {
   if (!settings.awake || !('wakeLock' in navigator) || document.visibilityState !== 'visible') return;
   try { wakeLock = await navigator.wakeLock.request('screen'); } catch { /* not allowed */ }
 }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') requestWake(); });
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  requestWake();
+  applyKeepAlive();
+  if (sheetTab === 'home' && $('sheetHost').firstElementChild) renderSheet();
+});
 
 // ── home lifecycle ───────────────────────────────────────────────────────────
 async function enterHome(code) {
@@ -910,6 +937,7 @@ async function enterHome(code) {
   loadTurns();
   joinedAt = now();
   await mesh.join(code);
+  applyKeepAlive();
   renderView();
   setTimeout(() => mesh.send('hello', {}), 400);
   setTimeout(checkHolder, 3700);
@@ -923,6 +951,7 @@ async function enterHome(code) {
 function leaveHome() {
   if (iHold()) handOffBeforeLeaving();
   mesh.send('bye', {});
+  try { NativeApp()?.keepAlive?.(false); } catch { /* */ }
   setTimeout(() => { mesh.leave(); store.del('home'); location.hash = ''; location.reload(); }, 300);
 }
 
@@ -1157,6 +1186,20 @@ function renderSheet() {
   bindPanel(host);
 }
 
+function wakeCard() {
+  const st = wakePermissions() || {};
+  const need = [
+    st.notifications === false && ['notifications', 'Allow notifications'],
+    st.fullScreen === false && ['fullScreen', 'Allow waking over the lock screen'],
+    st.overlay === false && ['overlay', 'Allow opening from the background'],
+  ].filter(Boolean);
+  return `<div class="card"><h3>Waking</h3>
+    ${toggleRow('wakeHere', 'Wake this screen for Caden', 'Stays connected while asleep, and turns on when Caden moves here.')}
+    ${settings.wakeHere && need.length ? `<p class="fine" style="margin:0">Android needs your OK for this to work while the phone is locked or in another app.</p>
+      <div class="row">${need.map(([k, l]) => `<button class="btn small" data-act="wakePerm" data-v="${k}">${l}</button>`).join('')}</div>` : ''}
+  </div>`;
+}
+
 function toggleRow(key, label, sub) {
   return `<label class="line"><span class="grow">${label}<small>${sub}</small></span><input type="checkbox" class="toggle" data-set="${key}" ${settings[key] ? 'checked' : ''}></label>`;
 }
@@ -1180,6 +1223,7 @@ function panel(tab) {
         <div class="field"><label for="sRoom">Room</label><input class="input" id="sRoom" value="${esc(me.room)}" maxlength="24" list="roomList"><datalist id="roomList">${ROOMS.map((r) => `<option value="${r}">`).join('')}</datalist></div>
         <button class="btn small primary" data-act="saveDevice">Save</button>
       </div>
+      ${NativeApp()?.wake ? wakeCard() : ''}
       <div class="card"><h3>Devices (${devs.length})</h3>
         ${devs.map((d) => `<div class="line"><span class="avatar" style="background:var(--bg2);color:var(--ink)">${roomIcon(d.room)}</span><span class="grow"><b>${esc(d.room || d.name)}</b><small>${esc(d.name)}, ${d.kind === 'app' ? 'Android app' : 'web'}</small>${d.sees ? `<small>Sees ${esc(d.sees.name)}</small>` : ''}</span>${linkBadge(d.id)}${d.id === me.id ? '<span class="badge soft">This one</span>' : ''}${d.id === holder.id ? '<span class="badge">Caden</span>' : ''}</div>`).join('')}
       </div>
@@ -1274,6 +1318,7 @@ function bindPanel(host) {
     if (el.dataset.set === 'typing') applyTyping();
     if (el.dataset.set === 'mic' || el.dataset.set === 'cam' || el.dataset.set === 'locate') startSenses();
     if (el.dataset.set === 'display') { applyDisplay(); if (el.checked) toast('Point with your hand. Pinch to press.'); }
+    if (el.dataset.set === 'wakeHere') { applyKeepAlive(); renderSheet(); }
     if (el.dataset.set === 'awake') { if (el.checked) requestWake(); else wakeLock?.release().catch(() => {}); }
   }));
   const eng = host.querySelector('#sEngine');
@@ -1295,6 +1340,7 @@ function bindPanel(host) {
 
 async function act(a, el) {
   if (a === 'copy') { try { await navigator.clipboard.writeText(el.dataset.v); toast('Invite link copied'); } catch { toast(el.dataset.v); } }
+  if (a === 'wakePerm') { try { NativeApp()?.openWakeSettings?.(el.dataset.v); } catch { /* */ } return; }
   if (a === 'leave' && confirm('Leave this home on this device?')) leaveHome();
   if (a === 'saveDevice') {
     me.name = $('sName').value.trim() || me.name;

@@ -59,6 +59,50 @@ public class Bridge {
     @JavascriptInterface
     public void installUpdate() { if (updater != null) updater.installNative(); }
 
+    // ── waking for Caden (CadenService.java) ────────────────────────────────
+    private boolean alive;
+
+    /** Stay connected to the home while asleep / in the background. */
+    @JavascriptInterface
+    public void keepAlive(boolean on) {
+        alive = on;
+        main.post(() -> { if (on) CadenService.start(ctx); else CadenService.stop(ctx); });
+    }
+    boolean keepingAlive() { return alive; }
+
+    /** Caden is flying here: screen on, app to the front, over the lock screen. */
+    @JavascriptInterface
+    public void wake() { main.post(() -> CadenService.wake(ctx)); }
+
+    /** {overlay, fullScreen, notifications}: what this phone allows for waking. */
+    @JavascriptInterface
+    public String wakeStatus() {
+        try {
+            JSONObject o = new JSONObject();
+            o.put("overlay", android.os.Build.VERSION.SDK_INT < 23 || android.provider.Settings.canDrawOverlays(ctx));
+            android.app.NotificationManager nm = ctx.getSystemService(android.app.NotificationManager.class);
+            o.put("fullScreen", android.os.Build.VERSION.SDK_INT < 34 || (nm != null && nm.canUseFullScreenIntent()));
+            o.put("notifications", nm == null || nm.areNotificationsEnabled());
+            return o.toString();
+        } catch (Exception e) { return "{}"; }
+    }
+
+    /** Open the system page that grants what's missing (which: overlay | fullScreen | notifications). */
+    @JavascriptInterface
+    public void openWakeSettings(String which) {
+        main.post(() -> {
+            String pkg = "package:" + ctx.getPackageName();
+            Intent i;
+            if ("overlay".equals(which)) i = new Intent(android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION, android.net.Uri.parse(pkg));
+            else if ("fullScreen".equals(which) && android.os.Build.VERSION.SDK_INT >= 34) i = new Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, android.net.Uri.parse(pkg));
+            else i = new Intent(android.provider.Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(android.provider.Settings.EXTRA_APP_PACKAGE, ctx.getPackageName());
+            i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            try { ctx.startActivity(i); } catch (Exception e) {
+                try { ctx.startActivity(new Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, android.net.Uri.parse(pkg)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); } catch (Exception ignored) { }
+            }
+        });
+    }
+
     Bridge(Context ctx, WebView web) {
         this.ctx = ctx;
         this.web = web;

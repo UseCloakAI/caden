@@ -56,8 +56,7 @@ The QR is the home's encryption key, so it stays hidden until asked for and hide
 Caden speaks with **NVIDIA Magpie TTS Multilingual** through the Cloak API (`POST https://api.usecloak.org/v1/speech`, Cloak's NVIDIA key pool; the worker talks gRPC to Riva since it has no REST API), prefetching each sentence while the previous one plays. If NVIDIA is unreachable it falls back to the device's own voice, sentence by sentence. Settings → Voice switches between the two and picks the Magpie voice." No key in Caden: it uses Cloak's. (NVIDIA deprecated Magpie TTS Flow; its replacement, Zeroshot, needs access approval, so voice cloning isn't used.)
 
 ### Sounds
-
-`js/sfx.js` synthesizes every effect with the Web Audio API (no audio files): FM bells in a warm D-major pentatonic, filtered-noise whooshes, soft plucks and a landing thump, rendered once to 48 kHz stereo buffers with a shared convolution reverb (UI ticks stay dry), normalized and click-free, then played through a stereo panner and a limiter. Flights pan the way Caden flies; the landing is timed to the squash. Settings → Voice → Sounds turns them off or sets the volume.
+Warm and deep, like a home speaker: soft rounded tones in G major, mostly low, with a sub for weight and a dark room. Two deep notes gliding up mean Caden is listening; a falling pair means it stopped; a deep swell when it moves between screens; a rolled low chord for good news.
 
 ### Finding you by voice
 
@@ -75,6 +74,9 @@ Every device opens a direct WebRTC data channel to every other device in the hom
 
 ### What Caden knows and can do
 Live weather for your home (Open-Meteo, free), where the home is (device location if allowed, else a coarse IP lookup), and the web (Cloak's search) for anything current: news, scores, prices, places nearby. It can also move itself to another screen ("go to the kitchen"), dim this screen, change its volume, or rest on the big clock. The rooms bar at the bottom shows every screen; tap one to send Caden there.
+
+### Waking Android screens
+The Android app stays connected to the home while the phone is asleep (a quiet "Ready for Caden" notification). When Caden moves to that phone, it turns the screen on, opens over the lock screen, and plays the full arrival. Android asks once for permission to wake over the lock screen; Settings has the buttons.
 
 ### Turns
 
