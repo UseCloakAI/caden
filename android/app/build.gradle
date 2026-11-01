@@ -1,0 +1,64 @@
+plugins {
+    id 'com.android.application'
+}
+
+// The web app (repo root) is bundled into the APK as assets/www, so the APK
+// and https://usecloakai.github.io/caden are the same Caden.
+def web = rootProject.file('..')
+def www = layout.buildDirectory.dir('generated/www')
+def syncWeb = tasks.register('syncWeb', Sync) {
+    from(web) {
+        include 'index.html', 'manifest.webmanifest', 'css/**', 'js/**', 'icons/**'
+    }
+    into www.map { it.dir('www') }
+}
+
+def ks = System.getenv('CADEN_KEYSTORE')
+
+android {
+    namespace 'org.usecloak.caden'
+    compileSdk 35
+
+    defaultConfig {
+        applicationId 'org.usecloak.caden'
+        minSdk 26
+        targetSdk 35
+        versionCode((System.getenv('CADEN_VERSION_CODE') ?: '1').toInteger())
+        versionName '1.0.' + (System.getenv('CADEN_VERSION_CODE') ?: '0')
+    }
+
+    sourceSets {
+        main.assets.srcDirs += www
+    }
+
+    signingConfigs {
+        release {
+            if (ks) {
+                storeFile file(ks)
+                storePassword System.getenv('CADEN_KEYSTORE_PASS')
+                keyAlias System.getenv('CADEN_KEY_ALIAS')
+                keyPassword System.getenv('CADEN_KEY_PASS')
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig ks ? signingConfigs.release : signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    dependenciesInfo { includeInApk false; includeInBundle false }
+    lint { checkReleaseBuilds false }
+}
+
+tasks.named('preBuild') { dependsOn syncWeb }
+// Zero dependencies on purpose: a WebView + framework speech APIs.

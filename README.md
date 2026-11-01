@@ -1,92 +1,80 @@
 # Caden
 
-Multi-agent platform for families and friends — every AI agent is its own user, with a
-profile, a handle, an identity colour, circles it belongs to, and contact permissions with
-other agents.
+A friendly voice agent for the whole home. Caden lives on the screens around a house — phones, tablets, old laptops — and **follows people from room to room**: when a device recognizes a face, Caden flies over to it, mid-conversation, with the turns intact. Say **"Hey Caden"** to any device and it comes to you.
 
-This repo holds the Caden design system (tokens + React components) and the reference UI
-kits built from it. Implemented from the Claude Design handoff.
+Runs as a web app (GitHub Pages) and as an Android APK. Powered by [Cloak](https://usecloak.org).
 
-## Run
+## How it works
 
-```sh
-npm install
-npm run dev        # http://localhost:5173  →  #/  #/app  #/ios  #/thumbnail
-npm run build
-npm run lint       # oxlint + design-system adherence (ESLint)
-npm run typecheck
-```
+| Piece | Where | What |
+|---|---|---|
+| Brain | Caden Supabase project → edge function `brain` | Keeps each home's turns + memories, builds the prompt, streams the reply from Cloak's `home` tier |
+| Model | `api.usecloak.org` `/v1/chat`, `model: "home"` | Cloak's NVIDIA key pool only (Nemotron → GLM-5.3-Flash → Laguna XS) + the spoken-reply `HOME_PLAYBOOK` |
+| Mesh | Supabase Realtime broadcast (Caden project) | Links a home's devices; every message AES-GCM encrypted with the home code |
+| Eyes | `js/faces.js` (face-api / tfjs, on device) | Detects + recognizes faces; frames never leave the device, only 128-number descriptors (encrypted) |
+| Ears | `js/voice.js` | Wake word + commands: Android SpeechRecognizer → Web Speech API → Cloak `/v1/transcribe` fallback |
+| Mouth | `js/voice.js` | Android TextToSpeech or `speechSynthesis`, sentence by sentence as the reply streams |
+| Face | `js/orb.js` + `css/caden.css` | The animated orb: idle, listening, thinking, speaking, sleepy, happy, and the fly-out / swoop-in between devices |
 
-## Backend (Supabase)
+### Moving between devices
 
-Schema, RLS and rate limits live in `supabase/migrations/`; agent logic in `supabase/functions/`
-(`agent-respond` on every new message, `agent-tick` for routines every 5 minutes).
+One device **holds** Caden at a time (`js/app.js`).
 
-**Brains are store chips.** `model_chips` is the catalog (one Groq model at one reasoning effort,
-with pros/cons and free-tier limits); `user_chips` is each person's library. An agent runs on its
-slotted chip, then the default chip (`is_default`, Workhorse), then Claude Haiku. If all three
-fail, `agents.model_error_at` is set and the agent shows a red alarm light until a turn works.
-Chips Groq stops serving are marked offline automatically (404/decommissioned, plus an hourly
-`/models` sync in `agent-tick`). Change the default with one SQL update to `is_default`.
+- A device that recognizes a known face sends `claim` to the holder. The holder lets go when it hasn't seen anyone for 5s and isn't mid-turn, and sends `handoff` with a bumped `epoch`.
+- "Hey Caden" (or tapping **Call Caden here**) on any device summons it immediately; a command said there runs as soon as Caden lands.
+- Highest epoch wins, ties go to the lower device id — two devices can't both keep Caden. If the holder disappears, the device that sees someone (else the lowest id) picks it up.
+- Turns, people and presence sync over the mesh; the brain keeps the durable history, so a new device catches up on join.
 
-**Agents run on Groq first, Claude last.** `_shared/providers.ts` cycles through a free-tier
-Groq key pool (an optional `GROQ_API_KEY` house key plus anyone's donated key from Settings →
-Community keys) and only falls back to Claude Haiku when every Groq key is disabled or cooling
-down from a rate limit. Each agent also gets two literal `.md` files in a private Storage
-bucket, `agent-files`: `souls/<id>.md` (identity, regenerated from its name/persona/tone) and
-`memory/<id>.md` (durable facts it chooses to `remember`, compacted once it grows past ~4KB).
-Long conversations get a rolling `conversations.summary`, recompacted every 24 messages, so
-prompts stay small. `agent-tick` writes a rolling `system/heartbeat.md` after every run.
+### Turns
 
-**Agents can search the web.** The `search_web` tool runs on the same cycling free-tier
-pattern as chat, via `_shared/search.ts` and a Tavily key pool (`provider_keys` with
-`provider = 'tavily'`, one house key plus donations from Settings → Search keys). Calling it
-takes an extra model round-trip — the agent asks to search, gets the results appended to its
-prompt, then acts — so each searched turn logs two `agent_runs` rows instead of one. Both key
-pools share the generic cycling/cooldown mechanics in `_shared/keypool.ts`. Settings shows
-Groq and Claude token usage as two separate bars, since `agent_runs.provider` now says which
-one served each turn (they still share one daily budget — see `tokensLeft` in `agent.ts`).
+Every exchange is a turn `{who, device, room, text, reply}`. `who` is the person recognized in front of the device (or the last speaker during a follow-up). The model sees the household conversation as `[Name] text` lines, so several people can take turns and Caden answers the right one. After answering, Caden keeps listening for ~8s without the wake word.
 
-Dashboard settings the code relies on:
+### Memory
 
-- **Auth → Sign in / Providers → Email:** Confirm email on. People confirm by link before signing in.
-- **Auth → URL Configuration:** Site URL `https://usecloakai.github.io/caden/`; redirect URLs
-  `https://usecloakai.github.io/caden/**` and `http://localhost:5173/caden/**`.
-- **Auth → SMTP:** set a custom sender before launch; the built-in one only sends a few emails an hour.
-- **Edge Functions → Secrets:** `ANTHROPIC_API_KEY` (fallback, still required), `GROQ_API_KEY`
-  (optional house key so the chat pool isn't empty on day one), `TAVILY_API_KEY` (optional
-  house key, same idea, for the search pool).
+When someone says something worth keeping, the model adds a `REMEMBER:` line (never spoken). The brain stores it in `home_memories` and feeds it back on every turn. Settings → Home → *What I remember* lists and forgets them.
 
-## Use the design system
-
-```tsx
-import { Button, DisplayHeadline, AgentCard } from '@/ds'; // also loads tokens + base CSS
-
-<DisplayHeadline size="hero">Let them <em>talk</em>.</DisplayHeadline>
-<Button variant="primary" arrow>Create an agent</Button>
-```
-
-Always import from `@/ds`, never from component files; the linter enforces it.
-
-Full rules — voice, colour discipline, type, spacing, motion, glass — live in
-[`docs/design-system.md`](docs/design-system.md). Read it before building new screens.
-
-## Layout
+## Repo
 
 ```
-src/
-  styles/        index.css + tokens/*.css + components.css (interactive states, motion)
-  ds/            components by group (core, motion, surfaces, agents, forms, navigation,
-                 messaging, overlays, feedback, ios), index.ts barrel
-  kits/          marketing home, app, ios reference screens + sample data
-  product/       the signed-in app on Supabase (routes load on demand)
-docs/            design-system.md
-SKILL.md         Agent Skill wrapper for AI tools working in this repo
+index.html            app shell
+css/caden.css         design (warm light / cozy dark, rounded, springy)
+js/app.js             the agent: holder election, handoffs, turns, voice loop, settings
+js/mesh.js            encrypted Realtime broadcast + BroadcastChannel
+js/faces.js           face detection / recognition / enrollment
+js/voice.js           ears, mouth, wake-word matching
+js/brain.js           brain client (Supabase edge function, Cloak fallback)
+js/orb.js             the orb and its flights
+js/config.js          endpoints + tuning
+android/              Android app: WebView serving the same files from assets + native speech bridge
+supabase/             brain edge function + migration
+.github/workflows/    ship.yml: APK → `latest` release + Pages (web + /caden.apk)
 ```
 
-## Known substitutions
+No build step for the web app — files ship as-is.
 
-- Fonts: Newsreader / Karla / IBM Plex Mono via Google Fonts, standing in for Lyon Display /
-  Suisse Int'l / Roboto Mono. Swap in `src/styles/tokens/fonts.css` when licensed files land.
-- Icons: Lucide (`lucide-react`).
-- No logo, photography, or device renders yet — wordmark is live type, hero is the noise sky.
+## Run locally
+
+```bash
+python3 -m http.server 8000
+```
+
+Open `http://localhost:8000` (camera/mic need `localhost` or https). Open a second browser profile to act as a second device.
+
+## Android
+
+```bash
+cd android && gradle assembleRelease
+```
+
+Needs JDK 17 + Android SDK 35. CI builds it on every push (`.github/workflows/ship.yml`), publishes `caden.apk` to the [`latest` release](../../releases/tag/latest) and to Pages at `/caden.apk`. Optional secrets for a stable signing key: `CADEN_KEYSTORE` (base64 .jks), `CADEN_KEYSTORE_PASS`, `CADEN_KEY_ALIAS`, `CADEN_KEY_PASS`.
+
+The APK serves the bundled web app from `https://caden.app/` (intercepted, offline) and adds `window.CadenNative` (SpeechRecognizer + TextToSpeech). While it listens it mutes the notification/system streams so the recognizer's start chime doesn't ding on every wake-word cycle.
+
+## Backend
+
+- Supabase project **Caden** (`wiimiqqmdmfikuqgqhtm`): tables `home_turns`, `home_memories` (RLS on, service-role only), edge function `brain` (`supabase/functions/brain`). Homes are keyed by `sha256("caden-db:" + homeCode)` — the server never sees the code.
+- The `home` tier lives in the Cloak worker (`UseCloakAI/cloak`, `api-worker/src/index.js` + `prompts.js` `HOME_PLAYBOOK`). Until that worker is deployed, the brain falls back to Cloak's `kairos` tier (also NVIDIA-first) with a short spoken-style note.
+
+## Privacy
+
+Video never leaves a device. Face descriptors and everything else on the mesh are encrypted with the home code. The brain stores turn text and memories per home hash; "Clear history" and "Forget" delete them.
