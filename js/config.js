@@ -29,4 +29,11 @@ export const TUNING = {
   keepTurns: 200,        // turns kept on each device
 };
 
+// Caden's voice: NVIDIA Magpie TTS Multilingual through the Cloak API (/v1/speech).
+export const NV_VOICE = 'Magpie-Multilingual.EN-US.Aria';
+
+// Where the web app lives: invite links and QR codes always point here, so a
+// phone's own camera app can open them (the Android app serves from caden.app).
+export const PUBLIC_URL = 'https://usecloakai.github.io/caden/';
+
 export const DEFAULT_WAKE = ['hey caden', 'caden', 'hey cloak'];

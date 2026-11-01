@@ -74,6 +74,7 @@ export class Ears extends EventTarget {
       if (kind === 'partial') this._emit('heard', { text, final: false });
       else if (kind === 'final') this._emit('heard', { text, final: true });
       else if (kind === 'level') this._emit('level', Number(text) || 0);
+      else if (kind === 'rms') this._emit('rms', Number(text));
       else if (kind === 'end' || kind === 'error') this._again(kind === 'error' ? 600 : 150);
     };
     Native().startListening(this.lang);
@@ -172,13 +173,19 @@ export class Ears extends EventTarget {
 export class Mouth extends EventTarget {
   constructor() {
     super();
-    this.queue = [];
+    this.queue = [];          // [{text, audio?: Promise<Blob>, ctrl?: AbortController}]
     this.busy = false;
     this.rate = 1;
     this.voiceName = '';
     this.n = 0;
+    this.nv = null;           // NVIDIA voice: {url, headers, voice, lang, home}
+    this.nvDownUntil = 0;     // after an NVIDIA error, use the device voice for a while
     window.__cadenNative.onSpeakDone = (id) => this._done(id);
   }
+
+  // Use NVIDIA Magpie through the Cloak API (/v1/speech), or null for the device voice.
+  useNvidia(cfg) { this.nv = cfg; }
+  get nvActive() { return !!this.nv && Date.now() > this.nvDownUntil; }
 
   voices() {
     if (Native()) return [];
@@ -195,24 +202,53 @@ export class Mouth extends EventTarget {
     return mine[0] || all[0] || null;
   }
 
-  // iOS/Safari only speak after a user gesture: call once from a tap.
+  // iOS/Safari only play sound after a user gesture: call once from a tap.
   unlock() {
-    if (Native() || this.unlocked || !window.speechSynthesis) return;
+    if (this.unlocked) return;
     this.unlocked = true;
+    this._player().play().then(() => this._player().pause()).catch(() => {});
+    if (Native() || !window.speechSynthesis) return;
     const u = new SpeechSynthesisUtterance(' ');
     u.volume = 0;
     window.speechSynthesis.speak(u);
   }
 
+  _player() {
+    if (!this.audio) {
+      this.audio = new Audio();
+      this.audio.preload = 'auto';
+      // a silent WAV so unlock() has something to play
+      this.audio.src = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YQAAAAA=';
+    }
+    return this.audio;
+  }
+
   say(text) {
     const t = String(text || '').replace(/[*_#`>~]|\[(?:[^\]]{1,24})\]\s*/g, '').trim();
     if (!t) return;
-    this.queue.push(t);
+    const item = { text: t };
+    // Start synthesizing now, so it overlaps whatever is playing.
+    if (this.nvActive) {
+      item.ctrl = new AbortController();
+      item.audio = this._fetch(t, item.ctrl.signal);
+      item.audio.catch(() => {}); // handled in _next
+    }
+    this.queue.push(item);
     this._next();
   }
 
+  async _fetch(text, signal) {
+    const { url, headers, voice, lang } = this.nv;
+    const r = await fetch(url, { method: 'POST', headers, signal, body: JSON.stringify({ text, voice, lang }) });
+    if (!r.ok) { let e = `voice ${r.status}`; try { e = (await r.json()).error || e; } catch { /* not json */ } throw new Error(e); }
+    return r.blob();
+  }
+
   stop() {
+    for (const it of this.queue) it.ctrl?.abort();
     this.queue = [];
+    this.cur = null;
+    if (this.audio) { this.audio.pause(); this.audio.onended = this.audio.onerror = null; }
     if (Native()) Native().stopSpeaking();
     else window.speechSynthesis?.cancel();
     if (this.busy) { this.busy = false; this._emit('end'); }
@@ -222,13 +258,68 @@ export class Mouth extends EventTarget {
 
   _emit(type, detail) { this.dispatchEvent(new CustomEvent(type, { detail })); }
 
-  _next() {
+  async _next() {
     if (this.busy || !this.queue.length) return;
-    const text = this.queue.shift();
+    const item = this.queue.shift();
     const id = String(++this.n);
     this.cur = id;
-    if (!this.busy) this._emit('start');
     this.busy = true;
+    if (item.audio) {
+      try {
+        const blob = await item.audio;
+        if (this.cur !== id) return; // stopped while it was synthesizing
+        await this._play(blob, id);
+        return;
+      } catch (e) {
+        if (this.cur !== id) return;
+        console.warn('[caden] NVIDIA voice failed, using the device voice', e);
+        this.nvDownUntil = Date.now() + 60_000;
+        this._emit('fallback', String(e.message || e));
+      }
+    }
+    this._device(item.text, id);
+  }
+
+  // How loud Caden's voice is right now (0..1), for the wave. Needs a running
+  // AudioContext (set by the app after the first tap); otherwise 0 and the
+  // wave falls back to syllable pulses.
+  level() {
+    if (!this._an || !this.busy || this.audio?.paused) return 0;
+    const b = this._buf || (this._buf = new Float32Array(this._an.fftSize));
+    this._an.getFloatTimeDomainData(b);
+    let s = 0; for (const v of b) s += v * v;
+    return Math.min(1, Math.sqrt(s / b.length) * 4);
+  }
+
+  _meter(a) {
+    const ctx = this.audioCtx;
+    if (this._an || !ctx || ctx.state !== 'running') return;
+    try {
+      const src = ctx.createMediaElementSource(a);
+      this._an = ctx.createAnalyser();
+      this._an.fftSize = 1024;
+      src.connect(this._an);
+      this._an.connect(ctx.destination);
+    } catch { /* already routed or not allowed: no meter */ }
+  }
+
+  async _play(blob, id) {
+    const a = this._player();
+    this._meter(a);
+    const url = URL.createObjectURL(blob);
+    const done = () => { URL.revokeObjectURL(url); a.onended = a.onerror = null; this._done(id); };
+    a.onended = done;
+    a.onerror = done;
+    a.src = url;
+    a.playbackRate = this.rate;
+    await a.play();
+    this._emit('start');
+    clearTimeout(this.watch);
+    this.watch = setTimeout(done, 30_000);
+  }
+
+  _device(text, id) {
+    this._emit('start');
     if (Native()) { Native().speak(text, id, this.rate); return; }
     if (!window.speechSynthesis) { setTimeout(() => this._done(id), 60 * text.length); return; }
     const u = new SpeechSynthesisUtterance(text);

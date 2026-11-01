@@ -178,6 +178,7 @@ export class AirNav {
   }
 
   _press(target) {
+    this.onPress?.();
     this.flash('press');
     this.cursor.classList.remove('pop'); void this.cursor.offsetWidth; this.cursor.classList.add('pop');
     target.classList.remove('air-pressed'); void target.offsetWidth; target.classList.add('air-pressed');

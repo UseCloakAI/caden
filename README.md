@@ -42,6 +42,27 @@ For a screen with a webcam (wall display, kitchen laptop, TV box): Settings → 
 
 Targets get bigger, the type box hides, and a small hand preview (drawn from landmarks, never the camera image) shows you're being tracked. External links are not pressable, so a kiosk can't navigate away. Faces and hands share one camera stream (`js/camera.js`). For an unattended kiosk, launch Chrome with `--autoplay-policy=no-user-gesture-required` so Caden can speak without a first tap.
 
+### Joining a home
+
+Settings → Home → **Show QR code** on any screen that's already in the home. It encodes the invite link (`https://usecloakai.github.io/caden/#join=<code>`), so either:
+
+- open Caden on the new device → Join my home → **Scan QR code** (uses `BarcodeDetector` where available, else the vendored jsQR; rear camera on phones), or
+- point any phone's camera at it, which opens Caden with the code filled in.
+
+The QR is the home's encryption key, so it stays hidden until asked for and hides itself after 2 minutes. Typing the code still works.
+
+### Voice
+
+Caden speaks with **NVIDIA Magpie TTS Multilingual** through the Cloak API (`POST https://api.usecloak.org/v1/speech`, Cloak's NVIDIA key pool; the worker talks gRPC to Riva since it has no REST API), prefetching each sentence while the previous one plays. If NVIDIA is unreachable it falls back to the device's own voice, sentence by sentence. Settings → Voice switches between the two and picks the Magpie voice." No key in Caden: it uses Cloak's. (NVIDIA deprecated Magpie TTS Flow; its replacement, Zeroshot, needs access approval, so voice cloning isn't used.)
+
+### Sounds
+
+`js/sfx.js` synthesizes every effect with the Web Audio API (no audio files): FM bells in a warm D-major pentatonic, filtered-noise whooshes, soft plucks and a landing thump, rendered once to 48 kHz stereo buffers with a shared convolution reverb (UI ticks stay dry), normalized and click-free, then played through a stereo panner and a limiter. Flights pan the way Caden flies; the landing is timed to the squash. Settings → Voice → Sounds turns them off or sets the volume.
+
+### Finding you by voice
+
+Every screen keeps a loudness meter (auto gain control off). When several screens hear "Hey Caden", each scores how loud it was against its own **calibration** (Settings → Voice → Calibrate: stand next to it and say "Hey Caden"), shares the score over the mesh, and the loudest takes Caden and the command after 700 ms; the rest stand down. Calibration cancels out different mics, so a hot mic across the room doesn't beat a quiet one next to you. Settings shows the last decision with each screen's score.
+
 ### LAN links
 
 Every device opens a direct WebRTC data channel to every other device in the home (`js/lan.js`). On the same network that's a host-to-host connection: messages arrive in about **1 ms** instead of a cloud round trip (41-49 ms from a datacenter in testing, more from a home connection). Handoffs, claims, turns and face syncs go over the links; heartbeats go over both, so a device that just joined still finds everyone.
@@ -70,6 +91,10 @@ icons/ph/             Phosphor icon font, vendored (MIT)
 js/app.js             the agent: holder election, handoffs, turns, voice loop, settings
 js/mesh.js            encrypted messaging: LAN links first, then BroadcastChannel / Realtime relay
 js/lan.js             WebRTC data channels between devices, path + ping
+js/locate.js          loudness meter + nearest-screen scoring for "Hey Caden"
+js/sfx.js             synthesized sound effects (Web Audio, offline-rendered, no files)
+js/qr.js              join QR: draw (qrcode-generator) and scan (BarcodeDetector / jsQR)
+js/vendor/            qrcode-generator (MIT), jsQR (Apache-2.0)
 js/faces.js           face detection / recognition / enrollment
 js/voice.js           ears, mouth, wake-word matching
 js/brain.js           brain client (Supabase edge function, Cloak fallback)
@@ -99,9 +124,23 @@ Open `http://localhost:8000` (camera/mic need `localhost` or https). Open a seco
 cd android && gradle assembleRelease
 ```
 
-Needs JDK 17 + Android SDK 35. CI builds it on every push (`.github/workflows/ship.yml`), publishes `caden.apk` to the [`latest` release](../../releases/tag/latest) and to Pages at `/caden.apk`. Optional secrets for a stable signing key: `CADEN_KEYSTORE` (base64 .jks), `CADEN_KEYSTORE_PASS`, `CADEN_KEY_ALIAS`, `CADEN_KEY_PASS`.
+Needs JDK 17 + Android SDK 35. CI builds it on every push (`.github/workflows/ship.yml`), publishes `caden.apk` to the [`latest` release](../../releases/tag/latest) and to Pages at `/caden.apk`.
 
-The APK serves the bundled web app from `https://caden.app/` (intercepted, offline) and adds `window.CadenNative` (SpeechRecognizer + TextToSpeech). While it listens it mutes the notification/system streams so the recognizer's start chime doesn't ding on every wake-word cycle.
+The APK bundles the web app and serves it from `https://caden.app/` (intercepted, offline-capable), plus `window.CadenNative` (SpeechRecognizer, TextToSpeech, updates). While it listens it mutes the notification/system streams so the recognizer's start chime doesn't ding on every wake-word cycle.
+
+### Auto-updates (`Updater.java`)
+
+- **Web (automatic):** every push to `main` publishes `version.json` on Pages (build number + SHA-256 of every web file). The app checks on start and every 30 minutes, downloads a newer build in the background, verifies every file, swaps it in atomically and reloads the next time Caden is idle. Same origin, so homes, people and settings carry over. Offline, it keeps the last good copy (or the bundled one).
+- **Native (one tap):** when the Android sources change (`native` hash in `version.json`), Settings → Home → App shows **Install app update**; the new APK is hash-checked and handed to Android's installer, which asks you to confirm.
+- **Signing:** Android only installs an update signed with the same key. Add these repository secrets once so every CI build is signed with one stable key (until then, native updates show a reinstall link instead):
+
+  ```bash
+  keytool -genkeypair -v -keystore caden.jks -alias caden -keyalg RSA -keysize 2048 -validity 10000
+  base64 -w0 caden.jks   # → secret CADEN_KEYSTORE
+  ```
+
+  plus `CADEN_KEYSTORE_PASS`, `CADEN_KEY_ALIAS` (`caden`) and `CADEN_KEY_PASS`. Keep `caden.jks` safe: losing it means everyone reinstalls once.
+- Phones running a build from before the updater existed need one manual install of the new APK.
 
 ## Backend
 

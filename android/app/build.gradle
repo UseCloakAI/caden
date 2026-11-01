@@ -11,6 +11,16 @@ def syncWeb = tasks.register('syncWeb', Sync) {
         include 'index.html', 'manifest.webmanifest', 'css/**', 'js/**', 'icons/**', 'fonts/**'
     }
     into www.map { it.dir('www') }
+    // What this APK carries, for the self-updater (Updater.java): its build
+    // number (same as the Pages deploy's), a hash of the native sources, and
+    // whether it's signed with the stable release key.
+    def build = System.getenv('CADEN_VERSION_CODE') ?: '0'
+    def nativeRev = System.getenv('CADEN_NATIVE_REV') ?: 'dev'
+    def stable = System.getenv('CADEN_KEYSTORE') ? 'true' : 'false'
+    inputs.property('caden', "$build/$nativeRev/$stable")
+    doLast {
+        new File(www.get().asFile, 'www/app.json').text = "{\"build\":$build,\"native\":\"$nativeRev\",\"stable\":$stable}"
+    }
 }
 
 def ks = System.getenv('CADEN_KEYSTORE')

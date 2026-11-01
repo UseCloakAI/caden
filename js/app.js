@@ -7,15 +7,20 @@
 // isn't mid-turn, and sends `handoff` with a bumped epoch. Saying "Hey Caden"
 // to any device summons it there right away. Highest epoch wins; ties go to
 // the lower device id, so two devices can never both keep it.
-import { TUNING, DEFAULT_WAKE } from './config.js';
+import { TUNING, DEFAULT_WAKE, API, NV_VOICE, PUBLIC_URL } from './config.js';
+import { qrSvg, QrScanner } from './qr.js';
 import { store, uid, device, newHomeCode, normCode } from './store.js';
 import { Mesh } from './mesh.js';
 import { Faces } from './faces.js';
 import { Ears, Mouth, findWake, normalize, hearingEngines } from './voice.js';
 import { think, homeContext, homeId, brainSync, brainForget, brainClear, stripRemember } from './brain.js';
-import { Orb, E } from './orb.js';
+import { E } from './orb.js';
+import { Wave, quietOrb } from './wave.js';
+import { Wheel } from './wheel.js';
 import { Hands } from './hands.js';
 import { AirNav } from './airnav.js';
+import { Meter, score, pickLoudest } from './locate.js';
+import { sfx } from './sfx.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -35,7 +40,7 @@ let home = store.get('home');              // { code, id }
 let people = store.get('people', []);      // [{id,name,color,d:[...],updated,deleted?}]
 let turns = [];
 let memories = [];
-const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false }, store.get('settings', {}));
+const settings = Object.assign({ cam: true, mic: true, engine: '', followUp: true, wake: DEFAULT_WAKE, voice: '', rate: 1, typing: false, awake: true, display: false, voiceEngine: 'nvidia', nvVoice: NV_VOICE, locate: true, voiceCal: null, sfx: true, sfxVol: 0.6 }, store.get('settings', {}));
 const saveSettings = () => store.set('settings', settings);
 
 const devices = new Map();                 // id -> {id,name,room,kind,last,holder,epoch,sees,phase}
@@ -57,14 +62,17 @@ const ears = new Ears();
 const mouth = new Mouth();
 const faces = new Faces($('cam'));
 const hands = new Hands();
+const qrScan = new QrScanner($('cam'));
+const meter = new Meter(); // wake-word loudness, for finding the nearest device
 let air = null; // AirNav, built at boot (needs the DOM)
-let orb, miniOrb, setupOrb;
+let orb, miniOrb, setupOrb, wheel;
 const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const alive = () => people.filter((p) => !p.deleted);
 const iHold = () => holder.id === me.id;
 
-function toast(text) {
+function toast(text, sound = 'pop') {
+  if (sound) sfx.play(sound);
   const t = document.createElement('div');
   t.className = 'toast';
   t.textContent = text;
@@ -212,11 +220,16 @@ async function leaveHere(to, reason) {
   setPhase('idle');
   mode = 'wait';
   renderDock();
-  if (reason !== 'quiet' && !$('here').hidden) await orb.leave(direction(me.id, to));
+  if (reason !== 'quiet' && !$('here').hidden) {
+    const dir = direction(me.id, to);
+    sfx.play('whooshOut', { pan: dir * 0.5 }); // off toward the side it flies
+    await orb.leave(dir);
+  }
   moving = false;
   renderView(true);
   $('capYou').innerHTML = '';
   $('capSaid').textContent = '';
+  setWide(false);
 }
 
 async function arriveHere(from, reason, person) {
@@ -224,7 +237,10 @@ async function arriveHere(from, reason, person) {
   setPhase('idle');
   renderView();
   renderDock();
-  await orb.arrive(from ? direction(from, me.id) : 1);
+  const dir = from ? direction(from, me.id) : 1;
+  sfx.play('whooshIn', { pan: -dir * 0.4 });       // in from the side it came from
+  sfx.play('land', { delay: 0.83 });                // the squash at 74% of the 1150 ms swoop
+  await orb.arrive(dir);
   moving = false;
   activity = now();
   const p = person ? alive().find((x) => x.id === person.id) || person : (freshSight() ? lastSight.person : null);
@@ -237,6 +253,7 @@ async function arriveHere(from, reason, person) {
   } else if (p && reason === 'face' && now() - (greeted.get(p.id) || 0) > 5 * 60 * 1000) {
     greeted.set(p.id, now());
     const hi = [`Hi ${p.name}!`, `Hey ${p.name}, I'm here.`, `Oh hi, ${p.name}.`][Math.floor(Math.random() * 3)];
+    sfx.play('sparkle');
     showSaid(hi);
     say(hi);
   }
@@ -262,6 +279,7 @@ function renderOrb() {
 
 // ── hearing ──────────────────────────────────────────────────────────────────
 function listenNow() {
+  if (iHold() && !(mode === 'command' && now() < modeUntil)) sfx.play('wake');
   if (iHold() && !(mode === 'command' && now() < modeUntil)) orb?.perk(); // heard you
   mode = 'command';
   modeUntil = now() + 7000;
@@ -272,21 +290,97 @@ function listenNow() {
 function onHeard({ text, final }) {
   if (mouth.speaking || (moving && !iHold())) return;
   const t = now();
+  if (calibrating && findWake(text, settings.wake)) { calibrate(); return; }
   if (mode === 'command' && t < modeUntil) {
     activity = t;
-    if (iHold() && text && text !== '…') $('capYou').innerHTML = `<span>${esc(text)}</span>`;
+    if (iHold() && !arb && text && text !== '…') $('capYou').innerHTML = `<span>${esc(text)}</span>`;
     if (!final) { modeUntil = Math.max(modeUntil, t + 4000); return; }
     const w = findWake(text, settings.wake);
     const cmd = (w ? w.rest : text).trim();
     if (normalize(cmd).length < 2) { modeUntil = t + 6000; return; }
+    if (arb) { arb.cmd = cmd; return; } // still deciding who's nearest
     handleCommand(cmd);
     return;
   }
   const w = findWake(text, settings.wake);
-  if (!w) return;
-  if (final && normalize(w.rest).length > 1) { handleCommand(w.rest); return; }
+  if (!w || now() < quietUntil) return;
+  if (calibrating) { calibrate(); return; }
+  wake(final && normalize(w.rest).length > 1 ? w.rest : null);
+}
+
+// ── voice location: the loudest "Hey Caden" wins ─────────────────────────────
+// Each device that hears the wake word scores how loud it was against its own
+// close-up calibration and shares the score; after ARB_MS the loudest device
+// takes Caden (and the command), the rest stand down. Alone, or with location
+// off, a device acts right away like before.
+const ARB_MS = 700;
+let arb = null;            // {cmd, scores: Map(id → score)}
+const heardEarly = [];     // scores that arrived before our own recognizer caught up
+let quietUntil = 0;        // ignore the tail of an utterance we lost
+let lastLocate = null;     // {win, scores, at} for Settings
+let calibrating = null;
+
+function wake(cmd) {
+  if (arb) { if (cmd) arb.cmd = cmd; return; }
+  const peak = settings.locate && meter.ok ? meter.peak() : null;
+  const mine = score(peak, settings.voiceCal, meter.scale);
+  if (mine == null || liveDevices().length < 2) { actOnWake(cmd); return; }
+  arb = { cmd, scores: new Map([[me.id, mine]]) };
+  for (const h of heardEarly) if (now() - h.at < 2000) arb.scores.set(h.from, h.score);
+  mode = 'command'; modeUntil = now() + 7000; // keep collecting the command meanwhile
+  mesh.send('heard', { score: mine });
+  setTimeout(decideWake, ARB_MS);
+}
+
+function actOnWake(cmd) {
+  if (cmd) { handleCommand(cmd); return; }
   listenNow();
   if (!iHold()) claim('voice', freshSight() ? lastSight.person : null);
+}
+
+function decideWake() {
+  const a = arb;
+  arb = null;
+  const win = pickLoudest(a.scores, holder.id);
+  lastLocate = { win, scores: Object.fromEntries(a.scores), at: Date.now() };
+  if (win === me.id) actOnWake(a.cmd);
+  else {
+    mode = 'wait';
+    quietUntil = now() + 2500;
+    if (iHold() && phase === 'listening') setPhase('idle');
+  }
+  if (sheetTab === 'voice') renderSheet();
+}
+
+function onRemoteHeard(from, sc) {
+  if (typeof sc !== 'number') return;
+  if (arb) { arb.scores.set(from, sc); return; }
+  heardEarly.push({ from, score: sc, at: now() });
+  while (heardEarly.length && now() - heardEarly[0].at > 3000) heardEarly.shift();
+}
+
+// Calibrate: stand next to this device and say "Hey Caden".
+function startCalibration() {
+  if (!meter.ok) { toast('Turn on "Listen for my name" first.'); return; }
+  calibrating = { until: now() + 10000 };
+  renderSheet();
+  setTimeout(() => {
+    if (calibrating && now() >= calibrating.until) { calibrating = null; toast('I didn\'t hear "Hey Caden". Try again.'); renderSheet(); }
+  }, 10100);
+}
+function calibrate() {
+  // Let the phrase finish, then take its peak.
+  const c = calibrating;
+  calibrating = null;
+  setTimeout(() => {
+    const p = meter.peak();
+    if (p == null || !c) { toast('Couldn\'t measure that. Try again.'); renderSheet(); return; }
+    settings.voiceCal = { db: Math.round(p * 10) / 10, scale: meter.scale, at: Date.now() };
+    saveSettings();
+    orb?.hop();
+    toast('Got it. This is how you sound up close.', 'success');
+    renderSheet();
+  }, 400);
 }
 
 function whoNow() {
@@ -322,7 +416,9 @@ async function runTurn(text, who) {
   mesh.send('turn', { turn });
   $('capYou').innerHTML = who ? `<b>${esc(who.name)}</b>“${esc(text)}”` : `“${esc(text)}”`;
   $('capSaid').textContent = '';
+  setWide(false);
   setPhase('thinking');
+  sfx.play('send');
 
   const ctrl = new AbortController();
   turnCtrl = ctrl;
@@ -346,6 +442,7 @@ async function runTurn(text, who) {
     if (ctrl.signal.aborted) return;
     turn.reply = "Sorry, I couldn't reach my brain just now. Try again in a moment.";
     orb.shake();
+    sfx.play('error');
     appendSaid(turn.reply);
     say(turn.reply);
     console.warn('[caden] turn failed', e);
@@ -368,8 +465,40 @@ function afterSpeaking() {
   ears.resume();
   if (!iHold()) return;
   activity = now();
+  // A while after a long answer, step back to the middle.
+  if (wide) { clearTimeout(wideT); wideT = setTimeout(() => { if (!streaming && !mouth.speaking && phase !== 'thinking') setWide(false); }, 25000); }
   if (settings.followUp && phase !== 'idle') { mode = 'command'; modeUntil = now() + TUNING.followUpMs; setPhase('listening'); }
   else setPhase('idle');
+}
+
+// ── long replies: Caden steps aside (FLIP tween) ────────────────────────────
+let wide = false, wideT = null;
+function setWide(on) {
+  clearTimeout(wideT);
+  const here = $('here');
+  if (wide === on) return;
+  wide = on;
+  if (here.hidden) { here.classList.toggle('wide', on); return; }
+  const slot = here.querySelector('.orb-slot'), cap = here.querySelector('.caption');
+  const first = slot.getBoundingClientRect();
+  here.classList.toggle('wide', on);
+  const last = slot.getBoundingClientRect();
+  if (reduced() || !last.width) return;
+  const dx = first.left - last.left, dy = first.top - last.top, k = first.width / last.width;
+  slot.animate([
+    { transformOrigin: '0 0', transform: `translate(${dx}px, ${dy}px) scale(${k})` },
+    { transformOrigin: '0 0', transform: 'translate(0, 0) scale(1)' },
+  ], { duration: 720, easing: 'cubic-bezier(.34,1.3,.64,1)' });
+  cap.animate(on
+    ? [{ opacity: 0, transform: 'translateX(28px)' }, { opacity: 1, transform: 'none' }]
+    : [{ opacity: 0, transform: 'translateY(12px)' }, { opacity: 1, transform: 'none' }],
+  { duration: 520, delay: 120, easing: 'cubic-bezier(.2,.8,.3,1)', fill: 'backwards' });
+}
+function fitCaption() {
+  const cap = document.querySelector('.here .caption'), said = $('capSaid');
+  if (!wide && (said.textContent.length > 160 || cap.scrollHeight > cap.clientHeight + 4)) setWide(true);
+  // follow the newest words unless someone scrolled up to reread
+  if (cap.scrollHeight - cap.scrollTop - cap.clientHeight < 80 || !cap.dataset.read) cap.scrollTop = cap.scrollHeight;
 }
 
 function showSaid(text) { $('capSaid').innerHTML = ''; appendSaid(text); }
@@ -390,6 +519,7 @@ function appendSaid(text) {
   el.appendChild(frag);
   // Keep the caption to the last few lines.
   while (el.childNodes.length > 160) el.removeChild(el.firstChild);
+  fitCaption();
 }
 
 // ── seeing ───────────────────────────────────────────────────────────────────
@@ -417,6 +547,7 @@ function renderView(animate = false) {
   $('where').innerHTML = `${roomIcon(me.room)}${esc(me.room || me.name)}`;
   const here = iHold() || moving;
   document.documentElement.classList.toggle('is-away', !here);
+  if (!moving) orb?.setAway?.(!here);
   $('here').hidden = !here;
   $('away').hidden = here;
   $('clock').style.opacity = here ? '1' : '.5';
@@ -499,6 +630,9 @@ function placePuck() {
 
 function tickClock() {
   const d = new Date();
+  // Ribbon's sky: day 7am-7pm, night otherwise (or when the device is in dark mode)
+  const night = d.getHours() < 7 || d.getHours() >= 19 || matchMedia('(prefers-color-scheme: dark)').matches;
+  document.documentElement.classList.toggle('night', night);
   $('clockTime').textContent = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
   $('clockDate').textContent = d.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' });
 }
@@ -573,19 +707,47 @@ hands.addEventListener('gesture', (e) => {
   } else if (name === 'thumbsDown') {
     // Back: close Settings, or stop Caden mid-sentence, or end listening.
     air?.flash('thumbsDown', 'Back');
-    if (sheetTab) closeSheet();
+    if (wheel?.open) wheel.close();
+    else if (sheetTab) closeSheet();
     else if (iHold() && (mouth.speaking || phase === 'thinking')) orbTap();
     else if (mode === 'command') { mode = 'wait'; if (iHold()) setPhase('idle'); }
   } else if (name === 'swipe') {
-    air?.swipe(dir);
+    if (wheel?.open) wheel.step(dir);
+    else { sfx.play('swish', { pan: dir * 0.5 }); air?.swipe(dir); }
   }
 });
 
 // ── wiring ───────────────────────────────────────────────────────────────────
 ears.addEventListener('heard', (e) => onHeard(e.detail));
 ears.addEventListener('level', (e) => orb?.level(e.detail));
+ears.addEventListener('rms', (e) => meter.push(e.detail));
 faces.addEventListener('sight', (e) => onSight(e.detail));
 let talkT = null;
+// Caden's voice: NVIDIA Magpie through the Cloak API (`/v1/speech`, Cloak's
+// NVIDIA key pool), else the device's own voice.
+const VOICE_URL = `${API}/v1/speech`;
+const VOICE_HEADERS = { 'Content-Type': 'application/json' };
+let nvVoices = null; // [{name, lang}] from NVIDIA, loaded when Settings → Voice opens
+const langOf = (name) => { const m = /\.([A-Z]{2})-([A-Z]{2})\./.exec(name || ''); return m ? `${m[1].toLowerCase()}-${m[2]}` : 'en-US'; };
+function applyVoice() {
+  if (settings.voiceEngine === 'nvidia' && home) {
+    const v = settings.nvVoice || NV_VOICE;
+    mouth.useNvidia({ url: VOICE_URL, headers: VOICE_HEADERS, voice: v, lang: nvVoices?.find((x) => x.name === v)?.lang || langOf(v), home: home.id });
+  } else mouth.useNvidia(null);
+}
+async function loadNvVoices() {
+  if (nvVoices) return nvVoices;
+  const r = await fetch(`${VOICE_URL}/voices`);
+  if (!r.ok) throw new Error(`voices ${r.status}`);
+  nvVoices = (await r.json()).voices || [];
+  return nvVoices;
+}
+let warnedVoice = false;
+mouth.addEventListener('fallback', () => {
+  if (warnedVoice) return;
+  warnedVoice = true;
+  toast("NVIDIA voice isn't reachable. Using this device's voice for now.");
+});
 mouth.addEventListener('start', () => {
   if (iHold()) setPhase('speaking');
   clearInterval(talkT);
@@ -622,6 +784,7 @@ mesh.addEventListener('msg', (e) => {
     case 'turn': mergeTurn(data.turn); break;
     case 'turns': for (const t of data.list || []) mergeTurn(t); break;
     case 'claim': onClaim(from, data); break;
+    case 'heard': onRemoteHeard(from, data.score); break;
     case 'handoff': onHandoff(from, data); break;
   }
 });
@@ -630,6 +793,8 @@ mesh.addEventListener('msg', (e) => {
 function startSenses() {
   faces.setPeople(alive());
   if (settings.mic) ears.start(settings.engine); else ears.stop();
+  if (settings.mic && settings.locate) { if (ears.engine === 'native') meter.useFeed(); else meter.start(); }
+  else meter.stop();
   if (settings.cam) faces.start(); else faces.stop();
   applyDisplay();
   requestWake();
@@ -657,6 +822,7 @@ async function enterHome(code) {
   code = normCode(code);
   home = { code, id: await homeId(code) };
   store.set('home', home);
+  applyVoice(); // the voice function wants the home id
   loadTurns();
   joinedAt = now();
   await mesh.join(code);
@@ -685,6 +851,7 @@ addEventListener('pagehide', () => { if (!home) return; if (iHold()) handOffBefo
 // ── onboarding ───────────────────────────────────────────────────────────────
 let draft = null, draftNew = false;
 function showStep(name) {
+  if (name !== 'join' && qrScan.on) stopScan();
   document.querySelectorAll('.step').forEach((s) => { s.hidden = s.dataset.step !== name; });
   setupOrb?.hop();
   if (name === 'device') {
@@ -713,6 +880,38 @@ document.querySelectorAll('[data-go]').forEach((b) => b.addEventListener('click'
   }
   showStep(go);
 }));
+// Scan a join QR (shown in Settings on a device that's already in the home).
+function stopScan() {
+  qrScan.stop();
+  $('qrBox').hidden = true;
+  $('btnScan').innerHTML = '<i class="ph ph-qr-code" aria-hidden="true"></i>Scan QR code';
+  stopEnroll(); // puts the camera <video> back where it lives
+}
+$('btnScan').onclick = async () => {
+  if (qrScan.on) { stopScan(); return; }
+  const box = $('qrBox'), vid = $('cam');
+  box.hidden = false;
+  box.prepend(vid);
+  vid.hidden = false;
+  vid.className = '';
+  $('btnScan').innerHTML = '<i class="ph ph-x" aria-hidden="true"></i>Stop scanning';
+  try {
+    await qrScan.start((code) => {
+      stopScan();
+      $('joinCode').value = code;
+      toast(`Found ${code}`, 'success');
+      draft = code;
+      draftNew = false;
+      showStep('device');
+    });
+    // Mirror the preview only for a front camera, so it feels natural.
+    const s = vid.srcObject?.getVideoTracks?.()[0]?.getSettings?.() || {};
+    box.classList.toggle('mirror', s.facingMode !== 'environment');
+  } catch (e) {
+    stopScan();
+    toast(e?.name === 'NotAllowedError' ? 'Camera is blocked. Type the code instead.' : 'No camera here. Type the code instead.');
+  }
+};
 $('btnJoin').onclick = () => {
   const c = normCode($('joinCode').value);
   if (c.length < 4) { $('joinCode').focus(); return; }
@@ -726,6 +925,7 @@ async function finishSetup(cam) {
   settings.cam = cam;
   saveSettings();
   await enterHome(draft);
+  sfx.play('success');
   if (draftNew) takeOver('first'); // a brand-new home: Caden starts right here
   startSenses();
   if (!alive().length) setTimeout(() => toast('Tip: add your face in Settings → People.'), 2500);
@@ -784,10 +984,53 @@ document.addEventListener('keydown', (e) => {
 matchMedia('(hover: hover) and (pointer: fine)').addEventListener('change', syncFull);
 syncFull();
 
+// ── the options wheel (top-left button) ─────────────────────────────────────
+function buildWheel() {
+  const items = [
+    { id: 'talk', icon: 'microphone', label: 'Talk', run: () => { mouth.unlock(); sfx.unlock(); if (iHold()) listenNow(); else claim('voice', freshSight() ? lastSight.person : null); } },
+    { id: 'here', icon: 'hand-waving', label: 'Call Caden here', run: () => { if (!iHold()) claim('tap', freshSight() ? lastSight.person : null); else orb.hop(); } },
+    { id: 'home', icon: 'house', label: 'Home', run: () => openSheet('home') },
+    { id: 'people', icon: 'users-three', label: 'People', run: () => openSheet('people') },
+    { id: 'voice', icon: 'waveform', label: 'Voice', run: () => openSheet('voice') },
+    { id: 'turns', icon: 'chats-circle', label: 'Turns', run: () => openSheet('turns') },
+    { id: 'display', icon: 'hand-pointing', label: 'Touch-free', run: () => { settings.display = !settings.display; saveSettings(); applyDisplay(); toast(settings.display ? 'Touch-free on. Point with your hand.' : 'Touch-free off.'); } },
+    { id: 'full', icon: 'corners-out', label: 'Full screen', run: () => toggleFull() },
+  ];
+  return new Wheel($('btnOptions'), items.filter((it) => it.id !== 'full' || canFull()));
+}
+
+// ── app updates (Android app; see Updater.java) ──────────────────────────────
+// Web builds download in the background and apply on the next idle moment;
+// a native (APK) update waits for a tap in Settings.
+const N = () => window.CadenNative;
+let appInfo = {};
+let nativeNoticed = false;
+function refreshAppInfo() { try { appInfo = JSON.parse(N()?.updateInfo?.() || '{}'); } catch { appInfo = {}; } }
+function idleForUpdate() {
+  return phase === 'idle' && !mouth.speaking && !moving && !streaming && !(mode === 'command' && now() < modeUntil)
+    && !sheetTab && !enrolling && !qrScan.on && !calibrating;
+}
+function applyWhenIdle() {
+  if (!idleForUpdate()) { setTimeout(applyWhenIdle, 10000); return; }
+  toast('Updating Caden…');
+  setTimeout(() => N()?.applyUpdate(), 1500);
+}
+if (isNative) {
+  window.__cadenNative.onUpdate = (kind) => {
+    refreshAppInfo();
+    if (kind === 'web') applyWhenIdle();
+    else if (!nativeNoticed) { nativeNoticed = true; toast('A new version of the app is ready. See Settings.'); }
+    if (sheetTab === 'home') renderSheet();
+  };
+  refreshAppInfo();
+}
+
 // ── settings sheet ───────────────────────────────────────────────────────────
 let sheetTab = null;
-function openSheet(tab) { sheetTab = tab; renderSheet(); }
+let qrUntil = 0, qrT = null; // join QR is shown on request, then hides itself
+function openSheet(tab) { sfx.play('sheetOpen'); sheetTab = tab; renderSheet(); }
 function closeSheet() {
+  if (sheetTab) sfx.play('sheetClose');
   sheetTab = null;
   stopEnroll();
   const host = $('sheetHost');
@@ -836,13 +1079,17 @@ function toggleRow(key, label, sub) {
 
 function panel(tab) {
   if (tab === 'home') {
-    const link = `${location.origin}${location.pathname}#join=${home.code}`;
+    const link = `${PUBLIC_URL}#join=${home.code}`;
+    const showQr = now() < qrUntil;
     const devs = liveDevices();
     return `
       <div class="card"><h3>Home code</h3>
         <div class="code">${esc(home.code)}</div>
         <p class="fine" style="margin:0">Type this on another phone, tablet or laptop to add it to your home. Everything between your devices is encrypted with it.</p>
-        <div class="row"><button class="btn small" data-act="copy" data-v="${esc(link)}">Copy invite link</button><button class="btn small ghost danger" data-act="leave">Leave home</button></div>
+        <div class="qr-show" id="qrShow" ${showQr ? '' : 'hidden'} data-link="${esc(link)}"></div>
+        ${showQr ? '<p class="fine" style="margin:0">Scan it in Caden\'s Join screen, or with any phone camera. Anyone who scans it can join, so it hides itself in 2 minutes.</p>' : ''}
+        <div class="row"><button class="btn small ${showQr ? '' : 'primary'}" data-act="qr"><i class="ph ph-qr-code" aria-hidden="true"></i>${showQr ? 'Hide QR code' : 'Show QR code'}</button><button class="btn small" data-act="copy" data-v="${esc(link)}">Copy link</button></div>
+        <button class="btn small ghost danger" data-act="leave">Leave home</button>
       </div>
       <div class="card"><h3>This device</h3>
         <div class="field"><label for="sName">Name</label><input class="input" id="sName" value="${esc(me.name)}" maxlength="24"></div>
@@ -863,7 +1110,12 @@ function panel(tab) {
       <div class="card"><h3>What I remember</h3>
         ${memories.length ? memories.map((m) => `<div class="line"><span class="grow">${esc(m.fact)}<small>${esc(m.who || '')}</small></span><button class="btn small ghost" data-act="forget" data-id="${m.id}">Forget</button></div>`).join('') : '<div class="empty">Nothing yet. Tell me things worth remembering.</div>'}
       </div>
-      ${isNative ? '' : '<a class="btn" href="caden.apk" download><i class="ph ph-android-logo" aria-hidden="true"></i>Get the Android app</a>'}
+      ${isNative ? `<div class="card"><h3>App</h3>
+        <div class="line"><span class="grow">Build ${esc(appInfo.build ?? '?')}<small>${appInfo.web === 'downloaded' ? 'Updated over the air' : 'As installed'}. Updates download by themselves and apply when I'm idle.</small></span>
+          <button class="btn small" data-act="checkUpdate"><i class="ph ph-arrows-clockwise" aria-hidden="true"></i>Check</button></div>
+        ${appInfo.nativeUpdate ? '<button class="btn primary" data-act="installUpdate"><i class="ph ph-download-simple" aria-hidden="true"></i>Install app update</button><p class="fine" style="margin:0">Android will ask you to confirm. Allow installs from Caden if it asks.</p>' : ''}
+        ${appInfo.nativeReinstall ? `<p class="fine" style="margin:0">A new app version is out that can't update in place. <a href="${PUBLIC_URL}caden.apk" target="_blank" rel="noopener">Download it</a> and reinstall.</p>` : ''}
+      </div>` : '<a class="btn" href="caden.apk" download><i class="ph ph-android-logo" aria-hidden="true"></i>Get the Android app</a>'}
       <p class="fine foot">Powered by <a href="https://usecloak.org" target="_blank" rel="noopener">Cloak</a></p>`;
   }
   if (tab === 'people') {
@@ -891,8 +1143,33 @@ function panel(tab) {
           ${engines.map((e) => `<option value="${e}" ${settings.engine === e ? 'selected' : ''}>${{ native: 'Android speech', browser: 'Browser speech', whisper: 'Cloak transcribe' }[e]}</option>`).join('')}
         </select></div>
       </div>
+      <div class="card"><h3>Find me by voice</h3>
+        ${toggleRow('locate', 'Go to the nearest screen', 'When several screens hear "Hey Caden", the one that heard you loudest answers.')}
+        <div class="line"><span class="grow">${settings.voiceCal
+          ? `Calibrated ${new Date(settings.voiceCal.at).toLocaleDateString([], { month: 'short', day: 'numeric' })}<small>Your up-close level here: ${settings.voiceCal.db} dB</small>`
+          : 'Not calibrated<small>Stand right next to this screen, tap Calibrate, then say "Hey Caden".</small>'}</span>
+          <button class="btn small ${calibrating ? 'primary' : ''}" data-act="calibrate">${calibrating ? '<i class="ph ph-microphone" aria-hidden="true"></i>Say "Hey Caden"' : 'Calibrate'}</button></div>
+        ${lastLocate ? `<div class="locate-result"><small>Last "Hey Caden"</small>${Object.entries(lastLocate.scores).sort((a, b) => b[1] - a[1]).map(([id, sc]) => {
+          const d = id === me.id ? me : devices.get(id);
+          return `<span class="${id === lastLocate.win ? 'win' : ''}">${roomIcon(d?.room)}${esc(d?.room || d?.name || 'Device')} <b>${sc >= 0 ? '+' : ''}${sc.toFixed(1)} dB</b></span>`;
+        }).join('')}</div>` : ''}
+      </div>
+      <div class="card"><h3>Sounds</h3>
+        ${toggleRow('sfx', 'Sound effects', 'Little chimes when I hear you, fly between rooms, or finish something.')}
+        <div class="field"><label for="sSfxVol">Volume</label><input type="range" id="sSfxVol" min="0" max="1" step="0.05" value="${settings.sfxVol}"></div>
+        <button class="btn small" data-act="sfxTest"><i class="ph ph-speaker-high" aria-hidden="true"></i>Play a sample</button>
+      </div>
       <div class="card"><h3>My voice</h3>
-        ${vs.length ? `<div class="field"><label for="sVoice">Voice</label><select class="input" id="sVoice"><option value="">Friendliest available</option>${vs.map((v) => `<option ${settings.voice === v.name ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></div>` : '<p class="fine" style="margin:0">Using this device\'s built-in voice.</p>'}
+        <div class="chips" role="radiogroup" aria-label="Which voice">
+          <button class="chip" type="button" role="radio" data-act="engine" data-v="nvidia" aria-pressed="${settings.voiceEngine === 'nvidia'}" aria-checked="${settings.voiceEngine === 'nvidia'}"><i class="ph ph-waveform" aria-hidden="true"></i>NVIDIA Magpie</button>
+          <button class="chip" type="button" role="radio" data-act="engine" data-v="device" aria-pressed="${settings.voiceEngine !== 'nvidia'}" aria-checked="${settings.voiceEngine !== 'nvidia'}"><i class="ph ph-device-mobile-speaker" aria-hidden="true"></i>This device</button>
+        </div>
+        ${settings.voiceEngine === 'nvidia'
+          ? (nvVoices
+            ? `<div class="field"><label for="sNvVoice">Voice</label><select class="input" id="sNvVoice">${nvVoices.map((v) => `<option value="${esc(v.name)}" ${settings.nvVoice === v.name ? 'selected' : ''}>${esc(v.name.replace(/^Magpie-Multilingual\./, '').replace(/\./g, ' '))}</option>`).join('')}</select></div>`
+            : '<p class="fine" style="margin:0" id="nvVoiceNote">Loading NVIDIA voices…</p>')
+          : (vs.length ? `<div class="field"><label for="sVoice">Voice</label><select class="input" id="sVoice"><option value="">Friendliest available</option>${vs.map((v) => `<option ${settings.voice === v.name ? 'selected' : ''}>${esc(v.name)}</option>`).join('')}</select></div>` : '<p class="fine" style="margin:0">Using this device\'s built-in voice.</p>')}
+        <p class="fine" style="margin:0">${settings.voiceEngine === 'nvidia' ? 'One natural voice on every screen. Needs the internet; falls back to the device voice if NVIDIA is busy.' : 'Works offline. Sounds different on each device.'}</p>
         <div class="field"><label for="sRate">Speed</label><input type="range" id="sRate" min="0.7" max="1.4" step="0.05" value="${settings.rate}"></div>
         <button class="btn small" data-act="testVoice">Test my voice</button>
       </div>`;
@@ -907,14 +1184,24 @@ function panel(tab) {
 function bindPanel(host) {
   host.querySelectorAll('[data-set]').forEach((el) => (el.onchange = () => {
     settings[el.dataset.set] = el.checked;
+    sfx.play(el.checked ? 'toggleOn' : 'toggleOff');
+    if (el.dataset.set === 'sfx') sfx.enabled = el.checked;
     saveSettings();
     if (el.dataset.set === 'typing') applyTyping();
-    if (el.dataset.set === 'mic' || el.dataset.set === 'cam') startSenses();
+    if (el.dataset.set === 'mic' || el.dataset.set === 'cam' || el.dataset.set === 'locate') startSenses();
     if (el.dataset.set === 'display') { applyDisplay(); if (el.checked) toast('Point with your hand. Pinch to press.'); }
     if (el.dataset.set === 'awake') { if (el.checked) requestWake(); else wakeLock?.release().catch(() => {}); }
   }));
   const eng = host.querySelector('#sEngine');
   if (eng) eng.onchange = () => { settings.engine = eng.value; saveSettings(); if (settings.mic) { ears.stop(); ears.start(settings.engine); } };
+  const qrBox = host.querySelector('#qrShow');
+  if (qrBox && !qrBox.hidden) qrSvg(qrBox.dataset.link).then((svg) => { qrBox.innerHTML = svg; }).catch(() => { qrBox.textContent = 'Couldn\'t draw the QR code. Use Copy link instead.'; });
+  const vol = host.querySelector('#sSfxVol');
+  if (vol) vol.oninput = () => { settings.sfxVol = Number(vol.value); sfx.setVolume(settings.sfxVol); saveSettings(); };
+  const nv = host.querySelector('#sNvVoice');
+  if (nv) nv.onchange = () => { settings.nvVoice = nv.value; saveSettings(); applyVoice(); };
+  if (host.querySelector('#nvVoiceNote')) loadNvVoices().then(() => { if (sheetTab === 'voice') renderSheet(); })
+    .catch(() => { const n = $('nvVoiceNote'); if (n) n.textContent = "Couldn't load NVIDIA voices right now. Using the default voice."; });
   const v = host.querySelector('#sVoice');
   if (v) v.onchange = () => { settings.voice = v.value; mouth.voiceName = v.value; saveSettings(); };
   const rate = host.querySelector('#sRate');
@@ -937,6 +1224,17 @@ async function act(a, el) {
     settings.wake = w.length ? w : DEFAULT_WAKE;
     saveSettings(); renderSheet(); toast('Wake words saved');
   }
+  if (a === 'sfxTest') { sfx.unlock(); sfx.play('wake'); sfx.play('whooshIn', { delay: 0.6 }); sfx.play('land', { delay: 1.43 }); sfx.play('success', { delay: 2.2 }); }
+  if (a === 'checkUpdate') { N()?.checkUpdate(); toast('Checking for updates…'); setTimeout(() => { refreshAppInfo(); if (sheetTab === 'home') renderSheet(); }, 5000); }
+  if (a === 'installUpdate') { N()?.installUpdate(); toast('Downloading the update…'); }
+  if (a === 'qr') {
+    qrUntil = now() < qrUntil ? 0 : now() + 120000;
+    clearTimeout(qrT);
+    if (qrUntil) qrT = setTimeout(() => { qrUntil = 0; if (sheetTab === 'home') renderSheet(); }, 120000);
+    renderSheet();
+  }
+  if (a === 'calibrate') { if (calibrating) { calibrating = null; renderSheet(); } else startCalibration(); }
+  if (a === 'engine') { settings.voiceEngine = el.dataset.v; saveSettings(); applyVoice(); warnedVoice = false; renderSheet(); }
   if (a === 'testVoice') { mouth.unlock(); mouth.stop(); say(`Hi! I'm Caden. I'm in the ${me.room || 'room'} with you.`); }
   if (a === 'clearTurns' && confirm('Clear the conversation history on every device?')) {
     turns = []; saveTurns(); renderSheet();
@@ -974,7 +1272,7 @@ async function enroll(existingId) {
     store.set('people', people);
     faces.setPeople(alive());
     sharePeople();
-    toast(`Nice to meet you, ${name}!`);
+    toast(`Nice to meet you, ${name}!`, 'success');
     if (iHold()) { orb.hop(); say(`Nice to meet you, ${name}.`); }
     if (!settings.cam) { settings.cam = true; saveSettings(); }
   } catch (e) {
@@ -997,7 +1295,7 @@ setInterval(() => {
   tickClock();
   if (mode === 'command' && now() > modeUntil) {
     mode = 'wait';
-    if (iHold() && phase === 'listening') setPhase('idle');
+    if (iHold() && phase === 'listening') { setPhase('idle'); sfx.play('cancel'); }
   }
   renderOrb();
 }, 1000);
@@ -1006,20 +1304,47 @@ addEventListener('resize', () => renderDock());
 
 // ── boot ─────────────────────────────────────────────────────────────────────
 function boot() {
-  orb = new Orb($('orb'));
-  miniOrb = new Orb($('miniOrb'));
+  orb = new Wave($('wave'));            // Caden is the wave
+  orb.speech = () => mouth.level();      // speaking swells it with the real voice
+  orb.mirror = $('orb'); orb.set('idle');
+  miniOrb = quietOrb;
   miniOrb.set('sleepy');
-  setupOrb = new Orb($('setupOrb'));
-  $('orb').addEventListener('click', orbTap);
+  setupOrb = { ...quietOrb, hop: () => orb.hop() };
+  wheel = buildWheel();
+  // Touch the wave: tap to talk; drag across it and it surges under your
+  // finger with soft plucks pitched by height (Ribbon's value sound).
+  let waveDrag = null;
+  $('orb').addEventListener('pointerdown', (e) => { waveDrag = { x: e.clientX, y: e.clientY, moved: 0, last: 0 }; });
+  addEventListener('pointermove', (e) => {
+    if (!waveDrag) return;
+    const dx = e.clientX - waveDrag.x;
+    waveDrag.moved += Math.abs(dx) + Math.abs(e.clientY - waveDrag.y);
+    waveDrag.x = e.clientX; waveDrag.y = e.clientY;
+    orb.energy += dx * 0.02;
+    orb.pulse = Math.min(1, orb.pulse + Math.abs(dx) * 0.004);
+    const now = performance.now();
+    if (waveDrag.moved > 12 && now - waveDrag.last > 90) { waveDrag.last = now; sfx.play('value', { value: 1 - e.clientY / innerHeight, pan: (e.clientX / innerWidth) * 2 - 1, gain: 0.7 }); }
+  });
+  addEventListener('pointerup', () => { if (waveDrag && waveDrag.moved > 12) waveDrag.dragged = true; setTimeout(() => (waveDrag = null), 0); });
+  $('orb').addEventListener('click', (e) => { if (waveDrag?.dragged) { e.stopImmediatePropagation(); return; } orbTap(); });
   $('orb').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); orbTap(); } });
-  document.addEventListener('pointerdown', () => mouth.unlock(), { once: true });
+  document.addEventListener('pointerdown', () => { mouth.unlock(); sfx.unlock(); }, { once: true });
+  document.addEventListener('keydown', () => sfx.unlock(), { once: true });
+  sfx.enabled = settings.sfx;
+  sfx.setVolume(settings.sfxVol);
+  sfx.unlock(); // allowed in the app and on kiosks; elsewhere it waits for the first tap
+  const giveVoiceMeter = () => { if (sfx.ctx) mouth.audioCtx = sfx.ctx; };
+  giveVoiceMeter();
+  document.addEventListener('pointerdown', giveVoiceMeter, { once: true });
   mouth.rate = settings.rate;
   mouth.voiceName = settings.voice;
+  applyVoice();
   applyTyping();
   tickClock();
   stopEnroll();
   air = new AirNav();
-  if (/[?&]debug\b/.test(location.search)) window.__caden = { hands, air, settings, mesh, holder: () => holder }; // test hook
+  air.onPress = () => sfx.play('click');
+  if (/[?&]debug\b/.test(location.search)) window.__caden = { wheel: () => wheel, setWide: (v) => setWide(v), appendSaid: (t) => appendSaid(t), hands, air, settings, mesh, meter, sfx, onHeard, holder: () => holder, lastLocate: () => lastLocate }; // test hook
   // #display boots straight into touch-free mode (kiosk screens).
   if (/(^|[#&])display\b/.test(location.hash)) { settings.display = true; saveSettings(); }
   applyDisplay();
