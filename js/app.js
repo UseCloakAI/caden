@@ -519,7 +519,7 @@ async function runTurn(text, who, step = false, images = null) {
     }
   } catch (e) {
     if (ctrl.signal.aborted) return;
-    turn.reply = "Sorry, I couldn't reach my brain just now. Try again in a moment.";
+    turn.reply = "I'm having trouble thinking right now. Ask me again in a moment.";
     orb.shake();
     sfx.play('error');
     appendSaid(turn.reply);
@@ -932,6 +932,7 @@ function setWide(on) {
 }
 function fitCaption() {
   const cap = document.querySelector('.here .caption'), said = $('capSaid');
+  $('here').classList.toggle('long', said.textContent.length > 150);
   if (!wide && (said.textContent.length > 160 || cap.scrollHeight > cap.clientHeight + 4)) setWide(true);
   // follow the newest words unless someone scrolled up to reread
   if (cap.scrollHeight - cap.scrollTop - cap.clientHeight < 80 || !cap.dataset.read) cap.scrollTop = cap.scrollHeight;
@@ -1102,7 +1103,7 @@ function placeClock(force = false) {
     dx = (W - dw * ds) / 2; dy = top + th * ts * 0.98 + 12;
     if (pills) pills.style.setProperty('--clocks-top', `${dy + dh * ds + 18}px`);
   } else {
-    const right = narrow ? 22 : 34;
+    const right = (narrow ? 22 : 34) + safeRight();
     ts = (narrow ? 26 : 34) / BIG; ds = 14 / DATE;
     tx = W - right - tw * ts; ty = safeTop + 4;
     dx = W - right - dw * ds; dy = ty + th * ts * 0.9 + 4;
@@ -1115,6 +1116,16 @@ function placeClock(force = false) {
   if (first) { void clock.offsetWidth; clock.classList.remove('no-anim'); clock.classList.add('placed'); }
 }
 addEventListener('resize', () => placeClock(true));
+// Geist arriving changes the clock's width: measure again (the corner clock
+// was overflowing the right edge when it was placed with the fallback font)
+document.fonts?.ready.then(() => placeClock(true));
+document.fonts?.addEventListener?.('loadingdone', () => placeClock(true));
+// the screen's safe area on the right (rounded corners, cutouts, edge-to-edge APK)
+let safeProbe = null;
+function safeRight() {
+  if (!safeProbe) { safeProbe = document.createElement('div'); safeProbe.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;padding-right:env(safe-area-inset-right)'; document.body.appendChild(safeProbe); }
+  return parseFloat(getComputedStyle(safeProbe).paddingRight) || 0;
+}
 
 function tickClock() {
   const d = new Date();
