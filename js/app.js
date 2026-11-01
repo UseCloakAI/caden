@@ -7,7 +7,7 @@
 // isn't mid-turn, and sends `handoff` with a bumped epoch. Saying "Hey Caden"
 // to any device summons it there right away. Highest epoch wins; ties go to
 // the lower device id, so two devices can never both keep it.
-import { TUNING, DEFAULT_WAKE, SB_URL, SB_KEY, NV_VOICE, PUBLIC_URL } from './config.js';
+import { TUNING, DEFAULT_WAKE, API, NV_VOICE, PUBLIC_URL } from './config.js';
 import { qrSvg, QrScanner } from './qr.js';
 import { store, uid, device, newHomeCode, normCode } from './store.js';
 import { Mesh } from './mesh.js';
@@ -667,9 +667,10 @@ ears.addEventListener('level', (e) => orb?.level(e.detail));
 ears.addEventListener('rms', (e) => meter.push(e.detail));
 faces.addEventListener('sight', (e) => onSight(e.detail));
 let talkT = null;
-// Caden's voice: NVIDIA Magpie through the Caden `voice` function, else the device's.
-const VOICE_URL = `${SB_URL}/functions/v1/voice`;
-const VOICE_HEADERS = { 'Content-Type': 'application/json', apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` };
+// Caden's voice: NVIDIA Magpie through the Cloak API (`/v1/speech`, Cloak's
+// NVIDIA key pool), else the device's own voice.
+const VOICE_URL = `${API}/v1/speech`;
+const VOICE_HEADERS = { 'Content-Type': 'application/json' };
 let nvVoices = null; // [{name, lang}] from NVIDIA, loaded when Settings → Voice opens
 const langOf = (name) => { const m = /\.([A-Z]{2})-([A-Z]{2})\./.exec(name || ''); return m ? `${m[1].toLowerCase()}-${m[2]}` : 'en-US'; };
 function applyVoice() {
@@ -680,7 +681,7 @@ function applyVoice() {
 }
 async function loadNvVoices() {
   if (nvVoices) return nvVoices;
-  const r = await fetch(VOICE_URL, { method: 'POST', headers: VOICE_HEADERS, body: JSON.stringify({ action: 'voices' }) });
+  const r = await fetch(`${VOICE_URL}/voices`);
   if (!r.ok) throw new Error(`voices ${r.status}`);
   nvVoices = (await r.json()).voices || [];
   return nvVoices;
@@ -926,6 +927,32 @@ document.addEventListener('keydown', (e) => {
 matchMedia('(hover: hover) and (pointer: fine)').addEventListener('change', syncFull);
 syncFull();
 
+// ── app updates (Android app; see Updater.java) ──────────────────────────────
+// Web builds download in the background and apply on the next idle moment;
+// a native (APK) update waits for a tap in Settings.
+const N = () => window.CadenNative;
+let appInfo = {};
+let nativeNoticed = false;
+function refreshAppInfo() { try { appInfo = JSON.parse(N()?.updateInfo?.() || '{}'); } catch { appInfo = {}; } }
+function idleForUpdate() {
+  return phase === 'idle' && !mouth.speaking && !moving && !streaming && !(mode === 'command' && now() < modeUntil)
+    && !sheetTab && !enrolling && !qrScan.on && !calibrating;
+}
+function applyWhenIdle() {
+  if (!idleForUpdate()) { setTimeout(applyWhenIdle, 10000); return; }
+  toast('Updating Caden…');
+  setTimeout(() => N()?.applyUpdate(), 1500);
+}
+if (isNative) {
+  window.__cadenNative.onUpdate = (kind) => {
+    refreshAppInfo();
+    if (kind === 'web') applyWhenIdle();
+    else if (!nativeNoticed) { nativeNoticed = true; toast('A new version of the app is ready. See Settings.'); }
+    if (sheetTab === 'home') renderSheet();
+  };
+  refreshAppInfo();
+}
+
 // ── settings sheet ───────────────────────────────────────────────────────────
 let sheetTab = null;
 let qrUntil = 0, qrT = null; // join QR is shown on request, then hides itself
@@ -1010,7 +1037,12 @@ function panel(tab) {
       <div class="card"><h3>What I remember</h3>
         ${memories.length ? memories.map((m) => `<div class="line"><span class="grow">${esc(m.fact)}<small>${esc(m.who || '')}</small></span><button class="btn small ghost" data-act="forget" data-id="${m.id}">Forget</button></div>`).join('') : '<div class="empty">Nothing yet. Tell me things worth remembering.</div>'}
       </div>
-      ${isNative ? '' : '<a class="btn" href="caden.apk" download><i class="ph ph-android-logo" aria-hidden="true"></i>Get the Android app</a>'}
+      ${isNative ? `<div class="card"><h3>App</h3>
+        <div class="line"><span class="grow">Build ${esc(appInfo.build ?? '?')}<small>${appInfo.web === 'downloaded' ? 'Updated over the air' : 'As installed'}. Updates download by themselves and apply when I'm idle.</small></span>
+          <button class="btn small" data-act="checkUpdate"><i class="ph ph-arrows-clockwise" aria-hidden="true"></i>Check</button></div>
+        ${appInfo.nativeUpdate ? '<button class="btn primary" data-act="installUpdate"><i class="ph ph-download-simple" aria-hidden="true"></i>Install app update</button><p class="fine" style="margin:0">Android will ask you to confirm. Allow installs from Caden if it asks.</p>' : ''}
+        ${appInfo.nativeReinstall ? `<p class="fine" style="margin:0">A new app version is out that can't update in place. <a href="${PUBLIC_URL}caden.apk" target="_blank" rel="noopener">Download it</a> and reinstall.</p>` : ''}
+      </div>` : '<a class="btn" href="caden.apk" download><i class="ph ph-android-logo" aria-hidden="true"></i>Get the Android app</a>'}
       <p class="fine foot">Powered by <a href="https://usecloak.org" target="_blank" rel="noopener">Cloak</a></p>`;
   }
   if (tab === 'people') {
@@ -1110,6 +1142,8 @@ async function act(a, el) {
     settings.wake = w.length ? w : DEFAULT_WAKE;
     saveSettings(); renderSheet(); toast('Wake words saved');
   }
+  if (a === 'checkUpdate') { N()?.checkUpdate(); toast('Checking for updates…'); setTimeout(() => { refreshAppInfo(); if (sheetTab === 'home') renderSheet(); }, 5000); }
+  if (a === 'installUpdate') { N()?.installUpdate(); toast('Downloading the update…'); }
   if (a === 'qr') {
     qrUntil = now() < qrUntil ? 0 : now() + 120000;
     clearTimeout(qrT);

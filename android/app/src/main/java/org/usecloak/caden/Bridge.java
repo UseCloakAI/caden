@@ -36,6 +36,28 @@ public class Bridge {
     private boolean ttsReady;
     private boolean muted;
     private long lastLevel;
+    private Updater updater;
+
+    void setUpdater(Updater u) { updater = u; }
+
+    void notifyUpdate(String kind, int build) {
+        js("onUpdate", kind, String.valueOf(build));
+    }
+
+    // ── updates (Updater.java) ──────────────────────────────────────────────
+    /** {build, web: bundled|downloaded, native, stable, remoteBuild?, nativeUpdate?, nativeReinstall?} */
+    @JavascriptInterface
+    public String updateInfo() { return updater == null ? "{}" : updater.local().toString(); }
+
+    @JavascriptInterface
+    public void checkUpdate() { if (updater != null) updater.check(); }
+
+    /** Switch to the downloaded web build (JS calls this when Caden is idle). */
+    @JavascriptInterface
+    public void applyUpdate() { if (ctx instanceof MainActivity) ((MainActivity) ctx).reloadApp(); }
+
+    @JavascriptInterface
+    public void installUpdate() { if (updater != null) updater.installNative(); }
 
     Bridge(Context ctx, WebView web) {
         this.ctx = ctx;

@@ -53,7 +53,7 @@ The QR is the home's encryption key, so it stays hidden until asked for and hide
 
 ### Voice
 
-Caden speaks with **NVIDIA Magpie TTS Multilingual** through the `voice` edge function (a small gRPC client, since Riva has no REST API), prefetching each sentence while the previous one plays. If NVIDIA is unreachable it falls back to the device's own voice, sentence by sentence. Settings → Voice switches between the two and picks the Magpie voice. Needs the `NVIDIA_API_KEY` secret (a free build.nvidia.com key) on the Caden Supabase project. (NVIDIA deprecated Magpie TTS Flow; its replacement, Zeroshot, needs access approval, so voice cloning isn't used.)
+Caden speaks with **NVIDIA Magpie TTS Multilingual** through the Cloak API (`POST https://api.usecloak.org/v1/speech`, Cloak's NVIDIA key pool; the worker talks gRPC to Riva since it has no REST API), prefetching each sentence while the previous one plays. If NVIDIA is unreachable it falls back to the device's own voice, sentence by sentence. Settings → Voice switches between the two and picks the Magpie voice." No key in Caden: it uses Cloak's. (NVIDIA deprecated Magpie TTS Flow; its replacement, Zeroshot, needs access approval, so voice cloning isn't used.)
 
 ### Finding you by voice
 
@@ -90,7 +90,6 @@ js/lan.js             WebRTC data channels between devices, path + ping
 js/locate.js          loudness meter + nearest-screen scoring for "Hey Caden"
 js/qr.js              join QR: draw (qrcode-generator) and scan (BarcodeDetector / jsQR)
 js/vendor/            qrcode-generator (MIT), jsQR (Apache-2.0)
-supabase/functions/voice/  NVIDIA Magpie TTS over gRPC → WAV
 js/faces.js           face detection / recognition / enrollment
 js/voice.js           ears, mouth, wake-word matching
 js/brain.js           brain client (Supabase edge function, Cloak fallback)
@@ -120,9 +119,23 @@ Open `http://localhost:8000` (camera/mic need `localhost` or https). Open a seco
 cd android && gradle assembleRelease
 ```
 
-Needs JDK 17 + Android SDK 35. CI builds it on every push (`.github/workflows/ship.yml`), publishes `caden.apk` to the [`latest` release](../../releases/tag/latest) and to Pages at `/caden.apk`. Optional secrets for a stable signing key: `CADEN_KEYSTORE` (base64 .jks), `CADEN_KEYSTORE_PASS`, `CADEN_KEY_ALIAS`, `CADEN_KEY_PASS`.
+Needs JDK 17 + Android SDK 35. CI builds it on every push (`.github/workflows/ship.yml`), publishes `caden.apk` to the [`latest` release](../../releases/tag/latest) and to Pages at `/caden.apk`.
 
-The APK serves the bundled web app from `https://caden.app/` (intercepted, offline) and adds `window.CadenNative` (SpeechRecognizer + TextToSpeech). While it listens it mutes the notification/system streams so the recognizer's start chime doesn't ding on every wake-word cycle.
+The APK bundles the web app and serves it from `https://caden.app/` (intercepted, offline-capable), plus `window.CadenNative` (SpeechRecognizer, TextToSpeech, updates). While it listens it mutes the notification/system streams so the recognizer's start chime doesn't ding on every wake-word cycle.
+
+### Auto-updates (`Updater.java`)
+
+- **Web (automatic):** every push to `main` publishes `version.json` on Pages (build number + SHA-256 of every web file). The app checks on start and every 30 minutes, downloads a newer build in the background, verifies every file, swaps it in atomically and reloads the next time Caden is idle. Same origin, so homes, people and settings carry over. Offline, it keeps the last good copy (or the bundled one).
+- **Native (one tap):** when the Android sources change (`native` hash in `version.json`), Settings → Home → App shows **Install app update**; the new APK is hash-checked and handed to Android's installer, which asks you to confirm.
+- **Signing:** Android only installs an update signed with the same key. Add these repository secrets once so every CI build is signed with one stable key (until then, native updates show a reinstall link instead):
+
+  ```bash
+  keytool -genkeypair -v -keystore caden.jks -alias caden -keyalg RSA -keysize 2048 -validity 10000
+  base64 -w0 caden.jks   # → secret CADEN_KEYSTORE
+  ```
+
+  plus `CADEN_KEYSTORE_PASS`, `CADEN_KEY_ALIAS` (`caden`) and `CADEN_KEY_PASS`. Keep `caden.jks` safe: losing it means everyone reinstalls once.
+- Phones running a build from before the updater existed need one manual install of the new APK.
 
 ## Backend
 

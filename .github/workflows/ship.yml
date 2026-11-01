@@ -18,8 +18,22 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    outputs:
+      native: ${{ steps.native.outputs.rev }}
+      stable: ${{ steps.native.outputs.stable }}
     steps:
       - uses: actions/checkout@v4
+
+      # Hash of the native sources: the self-updater only offers an APK update
+      # when this changes (web-only changes update in place).
+      - id: native
+        env:
+          KEYSTORE_B64: ${{ secrets.CADEN_KEYSTORE }}
+        run: |
+          rev=$(find android/app/src android/app/build.gradle android/app/proguard-rules.pro android/build.gradle android/settings.gradle -type f | sort | xargs sha256sum | sha256sum | cut -c1-16)
+          echo "rev=$rev" >> "$GITHUB_OUTPUT"
+          echo "CADEN_NATIVE_REV=$rev" >> "$GITHUB_ENV"
+          echo "stable=$([ -n "$KEYSTORE_B64" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -97,6 +111,37 @@ jobs:
           path: site
       - name: Stage the web app
         run: cp -r index.html manifest.webmanifest sw.js css js icons fonts site/
+
+      # version.json: what the Android app's updater compares against. Every
+      # file's SHA-256 so a download is verified before it's swapped in.
+      - name: Write version.json
+        env:
+          BUILD: ${{ github.run_number }}
+          NATIVE: ${{ needs.apk.outputs.native }}
+          STABLE: ${{ needs.apk.outputs.stable }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          site = 'site'
+          sha = lambda p: hashlib.sha256(open(p, 'rb').read()).hexdigest()
+          files = {}
+          for root, _, names in os.walk(site):
+              for n in names:
+                  p = os.path.join(root, n)
+                  rel = os.path.relpath(p, site).replace(os.sep, '/')
+                  if rel in ('caden.apk', 'version.json', 'sw.js'):
+                      continue
+                  files[rel] = sha(p)
+          out = {
+              'build': int(os.environ['BUILD']),
+              'native': os.environ.get('NATIVE', ''),
+              'stable': os.environ.get('STABLE') == 'true',
+              'apkSha256': sha(os.path.join(site, 'caden.apk')),
+              'files': files,
+          }
+          json.dump(out, open(os.path.join(site, 'version.json'), 'w'), indent=0)
+          print(len(files), 'files, build', out['build'], 'native', out['native'], 'stable', out['stable'])
+          PY
       - uses: actions/configure-pages@v5
         with:
           enablement: true

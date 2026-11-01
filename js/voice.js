@@ -183,7 +183,7 @@ export class Mouth extends EventTarget {
     window.__cadenNative.onSpeakDone = (id) => this._done(id);
   }
 
-  // Use NVIDIA Magpie through the `voice` function, or null for the device voice.
+  // Use NVIDIA Magpie through the Cloak API (/v1/speech), or null for the device voice.
   useNvidia(cfg) { this.nv = cfg; }
   get nvActive() { return !!this.nv && Date.now() > this.nvDownUntil; }
 
@@ -238,8 +238,8 @@ export class Mouth extends EventTarget {
   }
 
   async _fetch(text, signal) {
-    const { url, headers, voice, lang, home } = this.nv;
-    const r = await fetch(url, { method: 'POST', headers, signal, body: JSON.stringify({ action: 'say', home, text, voice, lang }) });
+    const { url, headers, voice, lang } = this.nv;
+    const r = await fetch(url, { method: 'POST', headers, signal, body: JSON.stringify({ text, voice, lang }) });
     if (!r.ok) { let e = `voice ${r.status}`; try { e = (await r.json()).error || e; } catch { /* not json */ } throw new Error(e); }
     return r.blob();
   }

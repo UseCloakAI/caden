@@ -37,6 +37,11 @@ public class MainActivity extends Activity {
 
     private WebView web;
     private Bridge bridge;
+    Updater updater;
+    private final android.os.Handler ticker = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable recheck = new Runnable() {
+        @Override public void run() { updater.check(); ticker.postDelayed(this, 30 * 60 * 1000L); }
+    };
     private PermissionRequest pending;
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
@@ -59,6 +64,12 @@ public class MainActivity extends Activity {
         s.setUserAgentString(s.getUserAgentString() + " CadenApp/1");
 
         bridge = new Bridge(this, web);
+        updater = new Updater(this, new Updater.Listener() {
+            @Override public void onWebReady(int build) { bridge.notifyUpdate("web", build); }
+            @Override public void onNativeAvailable(int build) { bridge.notifyUpdate("native", build); }
+        });
+        bridge.setUpdater(updater);
+        updater.local(); // drops a downloaded copy older than this APK
         web.addJavascriptInterface(bridge, "CadenNative");
 
         web.setWebViewClient(new WebViewClient() {
@@ -140,7 +151,9 @@ public class MainActivity extends Activity {
         String ext = path.substring(path.lastIndexOf('.') + 1).toLowerCase();
         String mime = MIME.containsKey(ext) ? MIME.get(ext) : "application/octet-stream";
         try {
-            InputStream in = getAssets().open("www" + path);
+            // The downloaded web update first (Updater), else the copy bundled in the APK.
+            java.io.File live = new java.io.File(updater.liveDir(), path.substring(1));
+            InputStream in = live.isFile() ? new java.io.FileInputStream(live) : getAssets().open("www" + path);
             Map<String, String> h = new HashMap<>();
             h.put("Cache-Control", "no-cache");
             h.put("Access-Control-Allow-Origin", "*");
@@ -158,6 +171,8 @@ public class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         web.onResume();
+        ticker.removeCallbacks(recheck);
+        ticker.postDelayed(recheck, 4000); // check soon after coming back, then every 30 min
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
     }
 
@@ -168,8 +183,11 @@ public class MainActivity extends Activity {
         super.onPause();
     }
 
+    void reloadApp() { runOnUiThread(() -> web.reload()); }
+
     @Override
     protected void onDestroy() {
+        ticker.removeCallbacks(recheck);
         bridge.shutdown();
         web.destroy();
         super.onDestroy();
