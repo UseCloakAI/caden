@@ -1,0 +1,107 @@
+name: Ship
+
+# Every push to main: build the Android APK, publish it to the rolling `latest`
+# release, and deploy the web app (with the APK at /caden.apk) to GitHub Pages.
+# Pull requests build the APK only.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ship-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14.3'
+
+      # Optional fixed signing key so updates install over the old app. Without
+      # these secrets the APK is debug-signed (works; updates need an uninstall).
+      - name: Signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.CADEN_KEYSTORE }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/caden.jks"
+            echo "CADEN_KEYSTORE=$RUNNER_TEMP/caden.jks" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build APK
+        working-directory: android
+        env:
+          CADEN_VERSION_CODE: ${{ github.run_number }}
+          CADEN_KEYSTORE_PASS: ${{ secrets.CADEN_KEYSTORE_PASS }}
+          CADEN_KEY_ALIAS: ${{ secrets.CADEN_KEY_ALIAS }}
+          CADEN_KEY_PASS: ${{ secrets.CADEN_KEY_PASS }}
+        run: |
+          gradle assembleRelease --no-daemon
+          cp app/build/outputs/apk/release/*.apk ../caden.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: caden-apk
+          path: caden.apk
+
+  release:
+    if: github.event_name != 'pull_request'
+    needs: apk
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: caden-apk
+      - name: Publish to the rolling "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          notes="Caden build ${{ github.run_number }} (${GITHUB_SHA::7}). Install caden.apk on Android 8+."
+          if gh release view latest >/dev/null 2>&1; then
+            gh release upload latest caden.apk --clobber
+            gh release edit latest --notes "$notes" --target "$GITHUB_SHA"
+          else
+            gh release create latest caden.apk --title "Caden (latest)" --notes "$notes" --target "$GITHUB_SHA" --prerelease
+          fi
+
+  pages:
+    if: github.event_name != 'pull_request'
+    needs: apk
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: caden-apk
+          path: site
+      - name: Stage the web app
+        run: cp -r index.html manifest.webmanifest sw.js css js icons fonts site/
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

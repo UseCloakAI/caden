@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Caden's face: a warm orb with two eyes and a smile (108dp adaptive canvas). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:pathData="M54,24a30,30 0,1 1,0 60a30,30 0,1 1,0 -60z">
+        <aapt:attr xmlns:aapt="http://schemas.android.com/aapt" name="android:fillColor">
+            <gradient android:type="linear" android:startX="30" android:startY="26" android:endX="80" android:endY="84">
+                <item android:offset="0" android:color="#FFFFC857" />
+                <item android:offset="0.5" android:color="#FFFF7A59" />
+                <item android:offset="1" android:color="#FFB29BFF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <path android:fillColor="#2C2433" android:pathData="M44,44a3.6,5.2 0,1 1,0 10.4a3.6,5.2 0,1 1,0 -10.4z" />
+    <path android:fillColor="#2C2433" android:pathData="M64,44a3.6,5.2 0,1 1,0 10.4a3.6,5.2 0,1 1,0 -10.4z" />
+    <path android:strokeColor="#2C2433" android:strokeWidth="3" android:strokeLineCap="round" android:pathData="M47,62q7,6 14,0" />
+</vector>

@@ -1,17 +1,111 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta name="theme-color" content="#0f1011" />
-    <meta name="color-scheme" content="dark" />
-    <meta name="description" content="Caden is a multi-agent platform for families and friends. Every agent has a profile, a handle and a circle, and agents with contact talk to each other." />
-    <title>Caden</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Caden, your home's voice</title>
+<meta name="description" content="Caden is a friendly voice agent that follows you from screen to screen around your home. Powered by Cloak.">
+<meta name="theme-color" content="#FFF7EE" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#17131F" media="(prefers-color-scheme: dark)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preload" href="fonts/nunito-latin-3.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/fredoka-latin-1.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="css/caden.css">
+</head>
+<body>
+
+<header class="top" id="top" hidden>
+  <div class="word"><i aria-hidden="true"></i>caden</div>
+  <div class="where" id="where"></div>
+  <div class="spacer"></div>
+  <div class="dots" role="status" aria-label="Status">
+    <span class="dot" id="dotNet" title="Home link"></span>
+    <span class="dot" id="dotMic" title="Hearing"></span>
+    <span class="dot" id="dotCam" title="Seeing"></span>
+  </div>
+  <button class="icon-btn" id="btnFull" aria-label="Full screen" aria-pressed="false" title="Full screen (F)" hidden><i class="ph ph-corners-out" aria-hidden="true"></i></button>
+  <button class="icon-btn" id="btnSettings" aria-label="Settings"><i class="ph ph-gear" aria-hidden="true"></i></button>
+</header>
+
+<main class="stage" id="stage" hidden>
+  <div class="clock" id="clock" aria-hidden="true"><b id="clockTime"></b><span id="clockDate"></span></div>
+
+  <section class="here" id="here" aria-live="polite">
+    <div class="orb-slot"><div id="orb" role="button" tabindex="0" aria-label="Talk to Caden"></div></div>
+    <div class="caption">
+      <div class="you" id="capYou"></div>
+      <div class="said" id="capSaid"></div>
+    </div>
+    <div class="hint" id="hint">Say <kbd>Hey Caden</kbd></div>
+  </section>
+
+  <section class="away" id="away" hidden aria-live="polite">
+    <div class="mini"><div id="miniOrb"></div></div>
+    <h2 id="awayTitle">Caden is in another room</h2>
+    <p id="awaySub"></p>
+    <button class="btn primary" id="btnSummon">Call Caden here</button>
+  </section>
+</main>
+
+<footer class="dock" id="dock" hidden>
+  <form class="typebar" id="typebar" hidden>
+    <label class="sr" for="typeIn">Type to Caden</label>
+    <input class="input" id="typeIn" autocomplete="off" placeholder="Type to Caden…">
+    <button class="btn primary small" type="submit">Send</button>
+  </form>
+  <nav class="rooms" id="rooms" aria-label="Devices in this home"><span class="puck" id="puck" aria-hidden="true"></span></nav>
+</footer>
+
+<!-- onboarding -->
+<section class="setup" id="setup" hidden>
+  <div class="setup-card">
+    <div class="orb-slot"><div id="setupOrb"></div></div>
+
+    <div class="step" data-step="hello">
+      <h1>Hi, I'm Caden.</h1>
+      <p>I live on the screens around your home and follow you from room to room. Say my name and I'll listen.</p>
+      <button class="btn primary" data-go="create">Start a new home</button>
+      <button class="btn" data-go="join">Join my home</button>
+    </div>
+
+    <div class="step" data-step="join" hidden>
+      <h1>Join a home</h1>
+      <p>Open Settings on a device that already has Caden and type its home code here.</p>
+      <div class="field"><label for="joinCode">Home code</label><input class="input" id="joinCode" placeholder="sunny-otter-42" autocapitalize="off" autocomplete="off" spellcheck="false"></div>
+      <div class="row"><button class="btn ghost" data-go="hello">Back</button><button class="btn primary" id="btnJoin">Join</button></div>
+    </div>
+
+    <div class="step" data-step="device" hidden>
+      <h1>Where am I?</h1>
+      <p>Give this device a room so I know where I am when I hop over.</p>
+      <div class="field"><label for="devName">Device name</label><input class="input" id="devName" maxlength="24"></div>
+      <div class="field"><label>Room</label><div class="chips" id="roomChips"></div></div>
+      <div class="field"><label for="roomOther" class="sr">Other room</label><input class="input" id="roomOther" placeholder="Or type a room…" maxlength="24"></div>
+      <button class="btn primary" data-go="senses">Next</button>
+    </div>
+
+    <div class="step" data-step="senses" hidden>
+      <h1>Let me see and hear</h1>
+      <p>I use the microphone for my name, and the camera to recognize faces so I can come find you. Video never leaves this device.</p>
+      <button class="btn primary" id="btnSenses">Turn on mic &amp; camera</button>
+      <button class="btn ghost" id="btnMicOnly">Mic only</button>
+      <p class="fine">You can change this any time in Settings.</p>
+    </div>
+  </div>
+</section>
+
+<video id="cam" playsinline muted autoplay hidden></video>
+<div id="sheetHost"></div>
+
+<script type="module" src="js/app.js"></script>
+<script>
+  if ('serviceWorker' in navigator && location.protocol === 'https:' && !/CadenApp/.test(navigator.userAgent)) {
+    addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+  }
+</script>
+</body>
 </html>
