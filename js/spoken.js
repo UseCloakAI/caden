@@ -57,6 +57,8 @@ function clock(h, m, ap) {
 
 export function spoken(text) {
   let s = String(text || '');
+  // TTS misreads "you're" (straight or curly apostrophe): say it in full
+  s = s.replace(/\b(y)ou[\u2019']re\b/gi, (_, y) => `${y}ou are`);
   // times: 9:05 AM, 9:05am, 17:30, 9 am, 9 p.m.
   const AP = '([ap](?:\\.m\\.|m\\b))';
   s = s.replace(new RegExp(`\\b(\\d{1,2}):(\\d{2})(?:\\s*${AP})?(?!\\d)`, 'gi'), (_, h, m, ap) => clock(h, m, ap));
