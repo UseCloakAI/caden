@@ -840,75 +840,112 @@ html.night body .toast { background: rgba(232, 241, 252, .94) !important; color:
 /* words start at the page's left margin, like the menu and the clock, not a centred column */
 .caption, .here.wide .caption { margin: 0; max-width: min(1100px, 100%); }
 
-/* ═══════════════════════════════════════════════════════════════════════
-   Frutiger Aero. Day: saturated sky to a white horizon, sun glare, soft
-   clouds, glossy green hills under the wave, drifting bubbles. Night: deep
-   blue, a teal and green aurora, stars, the hills in moonlight. Controls:
-   glossy aqua with the white shine on their top half; overlays are glass
-   with a sheen. Deliberate gloss on primary controls and overlays only.
-   ═══════════════════════════════════════════════════════════════════════ */
-/* background: calm. A soft sky, a faint wireframe globe (js/globe.js) and
-   three glass bubbles. No hills, clouds or aurora. */
-.sky-day { background: linear-gradient(180deg, #2f7fc6 0%, #4f9ad6 38%, #8cc0e6 74%, #cfe5f4 100%); }
-.sky-night { background: linear-gradient(180deg, #050d1e 0%, #0a2142 52%, #12375f 100%); }
-.aero { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
-.aero > * { position: absolute; transition: opacity 1.4s var(--e-out); }
-.aero-sun { right: -18vmax; top: -22vmax; width: 56vmax; height: 56vmax; border-radius: 50%;
-  background: radial-gradient(circle, rgba(255,255,255,.35) 0%, rgba(255,255,255,.12) 30%, transparent 62%); }
-html.night .aero-sun { opacity: .25; }
-.aero-globe { inset: 0; width: 100%; height: 100%; }
-
-/* glossy aqua controls: a white shine on the top half */
-.btn.primary, .chip[aria-pressed="true"], .clock-pill.ringing, .wheel-hl {
-  background: linear-gradient(180deg, rgba(255,255,255,.55) 0%, rgba(255,255,255,.18) 48%, rgba(255,255,255,0) 50%), linear-gradient(180deg, #4fc3ff 0%, #1186e0 55%, #0a6fc4 100%) !important;
-  color: #fff !important; border: 1px solid rgba(0, 70, 140, .55) !important; text-shadow: 0 1px 1px rgba(0, 50, 110, .45);
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.7), 0 1px 3px rgba(0, 60, 130, .25) !important;
-}
-.btn:not(.primary):not(.ghost), .chip:not([aria-pressed="true"]) {
-  background: linear-gradient(180deg, rgba(255,255,255,.8) 0%, rgba(255,255,255,.45) 50%, rgba(225,240,250,.35) 51%, rgba(240,250,255,.55) 100%) !important;
-  border: 1px solid rgba(255,255,255,.85) !important; color: #0c3b66 !important; box-shadow: inset 0 1px 0 #fff, 0 1px 2px rgba(0, 60, 130, .18) !important;
-}
-html.night .btn:not(.primary):not(.ghost), html.night .chip:not([aria-pressed="true"]) {
-  background: linear-gradient(180deg, rgba(160,210,255,.28) 0%, rgba(120,180,240,.12) 50%, rgba(60,120,200,.1) 51%, rgba(90,150,220,.2) 100%) !important;
-  border: 1px solid rgba(170, 215, 255, .35) !important; color: #e6f3ff !important;
-}
-
-/* the options button: a glossy blue orb */
-.options-btn, .options-btn:hover, .options-btn.is-open {
-  width: 54px; height: 54px; border-radius: 50%; color: #fff;
-  background: radial-gradient(ellipse 70% 45% at 50% 22%, rgba(255,255,255,.85), rgba(255,255,255,0) 72%), radial-gradient(circle at 50% 70%, #5fd0ff 0%, #1689e2 55%, #0a5fb0 100%) !important;
-  border: 1px solid rgba(0, 60, 130, .55) !important; box-shadow: 0 2px 6px rgba(0, 50, 120, .35), inset 0 -3px 8px rgba(120, 220, 255, .55) !important;
-}
-.options-btn:active { scale: .95; }
-
-/* overlays: Vista-style glass with a sheen across the top */
-.sheet, .wheel-ring {
-  background: linear-gradient(180deg, rgba(255,255,255,.55) 0%, rgba(255,255,255,.2) 22%, rgba(255,255,255,.08) 23%, rgba(225,242,255,.5) 100%) !important;
-  border: 1px solid rgba(255,255,255,.9) !important; box-shadow: 0 10px 40px -12px rgba(0, 50, 120, .45), inset 0 1px 0 #fff !important;
-  -webkit-backdrop-filter: blur(20px) saturate(160%); backdrop-filter: blur(20px) saturate(160%);
-}
-html.night .sheet, html.night .wheel-ring {
-  background: linear-gradient(180deg, rgba(150,200,255,.24) 0%, rgba(90,150,220,.12) 22%, rgba(20,50,100,.55) 23%, rgba(10,35,75,.8) 100%) !important;
-  border: 1px solid rgba(170, 215, 255, .4) !important;
-}
-html[data-quality="low"] .sheet, html[data-quality="low"] .wheel-ring { background: #e6f4fe !important; }
-html.night[data-quality="low"] .sheet, html.night[data-quality="low"] .wheel-ring { background: #0d2a52 !important; }
-
-/* rooms: the current room gets a small glossy aqua capsule under its name */
-.puck { height: 4px; bottom: 0; border-radius: 3px; background: linear-gradient(180deg, #8fe0ff, #1186e0); box-shadow: 0 0 6px rgba(80, 190, 255, .8); }
-
-/* words: crisp over the bright sky */
-html:not(.night) .caption .said { color: #06305a; text-shadow: 0 1px 0 rgba(255,255,255,.55); }
-html:not(.night) .clock b { color: #06305a; text-shadow: 0 1px 0 rgba(255,255,255,.6); }
-
-/* low quality and reduced motion: still Aero, nothing moves or blurs */
-
-
-
-html.locked .aero { opacity: .15; }
-
 /* words land with a fade and a small lift: no blur filter (a dozen blurred
    words at 48 to 72 px was what made replies stutter on tablets) */
 .caption .said .w { animation-name: wordInLite; will-change: auto; }
 @keyframes wordInLite { from { opacity: 0; translate: 0 5px; } }
 html:not(.night) .caption .said { text-shadow: none; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Cloak. Paper and ink, hard 2px borders, hard offset shadows (no blur),
+   Syne for display, Space Grotesk for text. No glass anywhere. Colour is a
+   neutral set of several hues instead of one accent: blue, green, yellow,
+   violet, teal, each used for its own job. The wave keeps its own colours.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  --paper: #F2EEE5; --surf: #FAFAF7; --p2: #EAE5DB; --p3: #DDD8CC; --ink-k: #0A0A0A;
+  --c-blue: #3E6FD8; --c-green: #2E9A68; --c-yellow: #E7B83A; --c-violet: #7B5BD6; --c-teal: #2A9BA6;
+  --fd: 'Syne', 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --fu: 'Space Grotesk', ui-sans-serif, system-ui, sans-serif;
+  --ink: #0A0A0A; --ink2: #3D3A35; --ink3: #6A665E;
+  --bg: var(--paper); --bg2: var(--p2); --card: var(--surf); --line: #0A0A0A;
+  --acc: var(--c-blue); --acc-ink: #2B55B0; --on-acc: #FFFFFF; --coral: var(--c-blue);
+  --ok: var(--c-green); --warn: var(--c-yellow); --danger: #C23A2B;
+  --bd: 2px solid var(--ink-k); --hs: 4px 4px 0 var(--ink-k); --hs-sm: 2px 2px 0 var(--ink-k); --hs-lg: 6px 6px 0 var(--ink-k);
+  --sh: none; --sh-lg: var(--hs-lg); --pill: 6px; --r: 8px; --r-sm: 6px;
+}
+html.night {
+  --paper: #141311; --surf: #1D1B18; --p2: #24221E; --p3: #2E2B26; --ink-k: #F2EEE5;
+  --c-blue: #7FA2F0; --c-green: #5CC496; --c-yellow: #F0CB62; --c-violet: #A88DF0; --c-teal: #5CC2CB;
+  --ink: #F2EEE5; --ink2: #CFC9BC; --ink3: #A39D90; --line: #F2EEE5;
+  --acc-ink: #A5BEF5; --on-acc: #0A0A0A;
+}
+
+/* background: flat paper, nothing drawn behind the wave */
+body { background: var(--paper); font-family: var(--fu); font-feature-settings: normal; }
+.sky-day, .sky-night { background: var(--paper) !important; }
+.aero { display: none; }
+
+/* no blur, anywhere */
+*, *::before, *::after { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+
+/* type */
+h1, h2, .clock b, .away h2, .sheet h2 { font-family: var(--fd); font-weight: 800; letter-spacing: -0.02em; }
+.clock b { font-weight: 800; }
+html:not(.night) .caption .said, html:not(.night) .clock b { color: var(--ink); text-shadow: none; }
+.caption .said { font-family: var(--fd); font-weight: 700; letter-spacing: -0.015em; }
+
+/* buttons: hard border, hard shadow; hover lifts by the shadow, press slams flat */
+.btn, .btn:not(.primary):not(.ghost) {
+  background: var(--surf) !important; color: var(--ink) !important; border: var(--bd) !important; border-radius: var(--r) !important;
+  box-shadow: var(--hs-sm) !important; text-shadow: none !important; font-weight: 600;
+  transition: translate 90ms, box-shadow 90ms !important;
+}
+.btn:hover { translate: -2px -2px; box-shadow: var(--hs) !important; }
+.btn:active { translate: 2px 2px; box-shadow: none !important; }
+.btn.primary { background: var(--c-blue) !important; color: var(--on-acc) !important; }
+.btn.danger, .btn.ghost.danger { color: var(--danger) !important; }
+.btn.ghost { background: transparent !important; border-color: transparent !important; box-shadow: none !important; }
+.btn.ghost:hover { translate: none; text-decoration: underline; text-underline-offset: 3px; }
+
+/* chips: outlined; selected ones take the next hue in the set */
+.chip, .chip:not([aria-pressed="true"]) { background: var(--surf) !important; color: var(--ink) !important; border: var(--bd) !important; border-radius: var(--r-sm) !important; box-shadow: none !important; text-shadow: none !important; }
+.chip[aria-pressed="true"] { background: var(--c-yellow) !important; color: #0A0A0A !important; border: var(--bd) !important; box-shadow: var(--hs-sm) !important; text-shadow: none !important; }
+.chip[aria-pressed="true"]:nth-child(4n+2) { background: var(--c-green) !important; }
+.chip[aria-pressed="true"]:nth-child(4n+3) { background: var(--c-violet) !important; color: #fff !important; }
+.chip[aria-pressed="true"]:nth-child(4n+4) { background: var(--c-teal) !important; }
+
+/* inputs and toggles */
+.input { background: var(--surf) !important; border: var(--bd) !important; border-radius: var(--r-sm) !important; color: var(--ink); }
+.input:focus { outline: none; box-shadow: var(--hs-sm) !important; }
+.toggle { background: var(--p3); border: var(--bd); }
+.toggle:checked { background: var(--c-green); }
+.toggle::after { top: 2px; left: 2px; background: var(--surf); border: 2px solid var(--ink-k); box-shadow: none; width: 22px; height: 22px; }
+:focus-visible { outline: 2px solid var(--c-blue) !important; outline-offset: 2px; }
+
+/* the options button: an ink square */
+.options-btn, .options-btn:hover, .options-btn.is-open {
+  width: 52px; height: 52px; border-radius: var(--r) !important; color: var(--ink) !important;
+  background: var(--surf) !important; border: var(--bd) !important; box-shadow: var(--hs-sm) !important;
+  transition: translate 90ms, box-shadow 90ms;
+}
+.options-btn:hover { translate: -2px -2px; box-shadow: var(--hs) !important; }
+.options-btn.is-open { background: var(--c-violet) !important; color: #fff !important; }
+.options-btn:active { translate: 2px 2px; box-shadow: none !important; scale: 1; }
+
+/* overlays: solid paper cards with a hard border and shadow */
+.sheet, .wheel-ring, html.night .sheet, html.night .wheel-ring,
+html[data-quality="low"] .sheet, html[data-quality="low"] .wheel-ring {
+  background: var(--paper) !important; border: var(--bd) !important; box-shadow: var(--hs-lg) !important; border-radius: var(--r) !important;
+}
+.sheet .card { border-top: 2px solid var(--ink-k); }
+.sheet .card h3 { font-family: var(--fd); font-weight: 800; font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: var(--ink); }
+.scrim { background: rgba(10, 10, 10, .35); }
+.wheel-hl { background: var(--c-blue) !important; border: var(--bd) !important; border-radius: var(--r-sm) !important; box-shadow: none !important; }
+.wheel-item[aria-current="true"] { color: #fff; }
+.tab { border-radius: var(--r-sm); border: 2px solid transparent; }
+.tab[aria-selected="true"] { background: var(--surf); border: var(--bd); box-shadow: var(--hs-sm); }
+
+/* rooms: words; the current room gets a short block in its own hue */
+.puck { height: 4px; bottom: 0; border-radius: 0; background: var(--c-teal); box-shadow: none; opacity: 1; }
+.room.holder { font-weight: 700; }
+
+/* timers, notices, toasts */
+.clock-pill { background: var(--surf); color: var(--ink); border: var(--bd); border-radius: var(--r-sm); box-shadow: var(--hs-sm); }
+.clock-pill:nth-child(3n+2) { background: color-mix(in oklab, var(--c-green) 22%, var(--surf)); }
+.clock-pill:nth-child(3n+3) { background: color-mix(in oklab, var(--c-violet) 22%, var(--surf)); }
+.clock-pill.ringing { background: var(--c-yellow) !important; color: #0A0A0A !important; border: var(--bd) !important; box-shadow: var(--hs-sm) !important; text-shadow: none !important; }
+.notice, html.night .notice { background: var(--surf); color: var(--ink); border: var(--bd); border-radius: var(--r); box-shadow: var(--hs); }
+body .toast, html.night body .toast { background: var(--ink-k) !important; color: var(--paper) !important; border-radius: var(--r-sm); box-shadow: var(--hs-sm) !important; }
+.card { border-radius: var(--r); }
+.away h2 { color: var(--ink); }
